@@ -25,16 +25,30 @@ Each layer is versioned independently and each can fail for different reasons, s
 findings stay tagged with the layer that produced them throughout.
 """
 
-from .models import Finding, Severity, ValidationReport
+from .engine import RuleSet, Validator
+from .exceptions import (
+    RuleSetError,
+    SahihError,
+    UnsafeDocumentError,
+    ValidationError,
+)
+from .models import Finding, Severity, StackedReport, ValidationReport
 from .svrl import SVRLParseError, parse_svrl
 
 __version__ = "0.1.0"
 
 __all__ = [
     "Finding",
+    "RuleSet",
+    "RuleSetError",
     "SVRLParseError",
+    "SahihError",
     "Severity",
+    "StackedReport",
+    "UnsafeDocumentError",
+    "ValidationError",
     "ValidationReport",
+    "Validator",
     "__version__",
     "parse_svrl",
 ]

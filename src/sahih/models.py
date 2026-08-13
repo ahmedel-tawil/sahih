@@ -158,3 +158,65 @@ class ValidationReport:
             f"({self.fired_rules} rules fired, "
             f"{len(self.fatals)} fatal, {len(self.warnings)} warning)"
         )
+
+
+@dataclass(frozen=True, slots=True)
+class StackedReport:
+    """
+    The result of validating one invoice against a *stack* of rule sets.
+
+    WHY THIS IS NOT JUST A MERGED LIST OF FINDINGS
+    ----------------------------------------------
+    Real validation runs several layers — EN 16931, then PINT base, then the
+    jurisdiction rules. We could flatten everything into one `ValidationReport`
+    and rely on `Finding.ruleset` to keep attribution. That loses something
+    important: the per-layer ``fired_rules`` count.
+
+    Per §"conditional rules" in the design notes, the number of rules that
+    *evaluated* in each layer is diagnostic. An invoice that fires 104 EN 16931
+    rules but only 3 jurisdiction rules is telling you the jurisdiction layer
+    barely engaged — which usually means a missing identifier upstream, not
+    compliance. Flattening hides that.
+
+    So this keeps each layer's report intact and offers aggregate views on top.
+    """
+
+    layers: tuple[ValidationReport, ...] = field(default_factory=tuple)
+    source: str = ""
+
+    @property
+    def findings(self) -> tuple[Finding, ...]:
+        """Every finding across all layers, in layer order."""
+        return tuple(f for layer in self.layers for f in layer.findings)
+
+    @property
+    def fired_rules(self) -> int:
+        """Total rules evaluated across all layers."""
+        return sum(layer.fired_rules for layer in self.layers)
+
+    @property
+    def is_valid(self) -> bool:
+        """True only when every layer is clean of blocking findings."""
+        return all(layer.is_valid for layer in self.layers)
+
+    @property
+    def fatals(self) -> tuple[Finding, ...]:
+        return tuple(f for f in self.findings if f.severity is Severity.FATAL)
+
+    @property
+    def warnings(self) -> tuple[Finding, ...]:
+        return tuple(f for f in self.findings if f.severity is Severity.WARNING)
+
+    def layer(self, name: str) -> ValidationReport | None:
+        """Fetch one layer's report by rule set name."""
+        for layer in self.layers:
+            if layer.ruleset == name:
+                return layer
+        return None
+
+    def __str__(self) -> str:
+        verdict = "valid" if self.is_valid else "INVALID"
+        breakdown = ", ".join(
+            f"{layer.ruleset}: {len(layer.fatals)}F/{layer.fired_rules}r" for layer in self.layers
+        )
+        return f"{self.source or 'document'} — {verdict} [{breakdown}]"
