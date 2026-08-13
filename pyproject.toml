@@ -26,6 +26,9 @@ dependencies = [
     "defusedxml>=0.7.1",
 ]
 
+[project.scripts]
+sahih = "sahih.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/ahmedel-tawil/sahih"
 Repository = "https://github.com/ahmedel-tawil/sahih"
