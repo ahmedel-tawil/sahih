@@ -1,0 +1,72 @@
+[project]
+name = "sahih"
+version = "0.1.0"
+description = "Validate Peppol / PINT e-invoices in Python — and explain why they failed"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [{ name = "Ahmed El-Tawil" }]
+keywords = ["peppol", "pint", "ubl", "e-invoicing", "einvoicing", "schematron", "uae", "vat"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial :: Accounting",
+    "Topic :: Text Processing :: Markup :: XML",
+]
+
+dependencies = [
+    # Saxon is not optional: Schematron compiles to XSLT 2.0/3.0, and Python's
+    # lxml (libxslt) is XSLT 1.0 only. This is the whole reason the gap exists.
+    "saxonche>=13.0.0",
+    # Invoices arrive from suppliers. Treat every document as hostile input.
+    "defusedxml>=0.7.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/ahmedel-tawil/sahih"
+Repository = "https://github.com/ahmedel-tawil/sahih"
+Issues = "https://github.com/ahmedel-tawil/sahih/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sahih"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-cov>=6.0.0",
+    "mypy>=1.13.0",
+    "ruff>=0.8.0",
+    "types-defusedxml>=0.7.0.20260504",
+]
+
+[tool.uv]
+default-groups = ["dev"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "PTH", "RUF"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["sahih"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
