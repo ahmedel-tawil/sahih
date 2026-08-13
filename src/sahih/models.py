@@ -22,10 +22,10 @@ CLI, and the MCP server all consume `Finding` objects.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 
-class Severity(str, Enum):
+class Severity(StrEnum):
     """
     How serious a fired rule is.
 

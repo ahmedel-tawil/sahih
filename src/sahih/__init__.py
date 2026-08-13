@@ -32,12 +32,16 @@ from .exceptions import (
     UnsafeDocumentError,
     ValidationError,
 )
+from .explain import Explainer, Explanation, ExplanationSource
 from .models import Finding, Severity, StackedReport, ValidationReport
 from .svrl import SVRLParseError, parse_svrl
 
 __version__ = "0.1.0"
 
 __all__ = [
+    "Explainer",
+    "Explanation",
+    "ExplanationSource",
     "Finding",
     "RuleSet",
     "RuleSetError",

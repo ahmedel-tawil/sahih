@@ -3,7 +3,7 @@ name = "sahih"
 version = "0.1.0"
 description = "Validate Peppol / PINT e-invoices in Python — and explain why they failed"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "Apache-2.0"
 authors = [{ name = "Ahmed El-Tawil" }]
 keywords = ["peppol", "pint", "ubl", "e-invoicing", "einvoicing", "schematron", "uae", "vat"]
@@ -11,7 +11,6 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Intended Audience :: Financial and Insurance Industry",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -53,7 +52,7 @@ default-groups = ["dev"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 src = ["src"]
 
 [tool.ruff.lint]
@@ -65,7 +64,7 @@ ignore = ["RUF002"]
 known-first-party = ["sahih"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 

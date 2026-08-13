@@ -1,0 +1,227 @@
+# Curated rule explanations.
+#
+# WHAT THIS FILE IS
+# -----------------
+# Official rule messages are accurate and close to unreadable. "BR-CO-15: Invoice
+# total amount with VAT (BT-112) = Invoice total amount without VAT (BT-109) +
+# Invoice total VAT amount (BT-110)" tells a Peppol implementer everything and an
+# accountant nothing.
+#
+# Each entry here is ORIGINAL WRITING that turns one rule into three answers:
+#   summary  what went wrong, in a sentence a finance person would use
+#   why      why the rule exists, so the fix is understood rather than guessed
+#   fix      what to actually change
+#
+# WHY IT IS HAND-WRITTEN AND NOT GENERATED
+# ----------------------------------------
+# The official text is OpenPeppol's work and is NOT reproduced here — sahih reads it
+# at runtime from artefacts the user fetched themselves. Everything in this file is
+# ours, which keeps the package free of redistribution questions and means the
+# explanations can be better than a paraphrase.
+#
+# COVERAGE IS DELIBERATELY PARTIAL
+# --------------------------------
+# There are 223 EN 16931 rules and 88 UAE jurisdiction rules. Curating all of them
+# up front would mean inventing semantics for rules nobody has hit. Uncurated rules
+# fall back to their official message, which still works — just less kindly. Add
+# entries here as real failures show up.
+#
+# Field reference: BT-* are EN 16931 business terms, IBT-* are PINT international
+# terms, BTAE-* are UAE-specific terms.
+
+# ===========================================================================
+# EN 16931 — mandatory fields
+# ===========================================================================
+
+["BR-01"]
+summary = "The invoice doesn't say which e-invoicing specification it follows."
+why = """
+Every e-invoice must declare its own rulebook, because the receiver needs to know \
+which set of rules to validate against before it can read anything else. Without it \
+the document is just XML — nobody knows whether it claims to be a UAE tax invoice, \
+a European one, or something else entirely."""
+fix = """
+Add a CustomizationID element near the top of the invoice. For UAE e-invoicing this \
+identifies PINT AE; your ASP or integration guide will give you the exact string to \
+use. Copy it verbatim — it is matched exactly, not interpreted."""
+terms = ["BT-24"]
+
+["BR-02"]
+summary = "The invoice has no invoice number."
+why = """
+The invoice number is how this document is referenced forever after — by the buyer's \
+accounts payable, by credit notes that correct it, and by the tax authority during an \
+audit. Nothing downstream can refer to an invoice that has no identity."""
+fix = "Add an ID element with your invoice number. It must be unique within your own numbering series."
+terms = ["BT-1"]
+
+["BR-03"]
+summary = "The invoice has no issue date."
+why = """
+The issue date determines which VAT period the invoice falls into and when payment \
+terms start counting. It is the single most tax-relevant date on the document."""
+fix = "Add an IssueDate element in YYYY-MM-DD format. This is the date the invoice was issued, not the date the goods or services were supplied — those can differ, and there is a separate field for the supply date."
+terms = ["BT-2"]
+
+["BR-06"]
+summary = "The seller's name is missing."
+why = "A tax invoice must identify who is selling. Without a seller name the buyer cannot record who they bought from, and the document has no standing as a tax record."
+fix = "Add the registered legal name of the selling party — the name as it appears on your trade licence, not a trading or brand name."
+terms = ["BT-27"]
+
+["BR-07"]
+summary = "The buyer's name is missing."
+why = "A tax invoice must identify who is being billed. This is also what lets the buyer claim input VAT — an invoice that does not name them is not usable as evidence."
+fix = "Add the registered legal name of the buying party."
+terms = ["BT-44"]
+
+["BR-11"]
+summary = "The buyer's address has no country code."
+why = """
+Country determines VAT treatment more than any other single field. Whether a supply \
+is domestic, an export, or zero-rated depends on where the buyer is. Without a country \
+code the correct tax treatment cannot be established at all."""
+fix = "Add a country code to the buyer's postal address, as a two-letter ISO 3166-1 code — 'AE' for the United Arab Emirates. Not the country name."
+terms = ["BT-55"]
+
+["BR-63"]
+summary = "The buyer's electronic address is missing its scheme identifier."
+why = """
+An electronic address is meaningless without knowing what kind of address it is. The \
+same digits could be a tax registration number, a company registry number, or a network \
+participant ID. The scheme identifier says which — it is what allows the Peppol network \
+to route the document to the right recipient."""
+fix = "Add a schemeID attribute to the buyer's EndpointID element. Your ASP will tell you which scheme code applies to UAE participants."
+terms = ["BT-49"]
+
+# ===========================================================================
+# EN 16931 — calculation rules
+# ===========================================================================
+
+["BR-CO-15"]
+summary = "The invoice totals don't add up: total with VAT is not equal to total without VAT plus the VAT amount."
+why = """
+This is the arithmetic check at the heart of the whole document. If these three numbers \
+disagree, either a line total is wrong, VAT was calculated on the wrong base, or a \
+rounding step went astray. Receivers reject on this immediately because it means the \
+invoice cannot be posted to a ledger."""
+fix = """
+Check all three amounts against each other. The most common cause is VAT calculated on \
+the pre-discount amount when a document-level discount is present, or the reverse. \
+Recompute as: total-without-VAT plus total-VAT equals total-with-VAT, then confirm each \
+of those against the sum of its own lines."""
+terms = ["BT-112", "BT-109", "BT-110"]
+
+["BR-CO-16"]
+summary = "The amount due for payment doesn't reconcile with the invoice total, prepayments, and rounding."
+why = """
+The amount due is what the buyer will actually pay. It has to be derivable from the \
+invoice total minus anything already paid, plus any rounding adjustment. If it is not, \
+the buyer's payment will not match their ledger entry and the invoice will sit unpaid \
+in a query queue."""
+fix = "Recompute as: total-with-VAT minus already-paid plus rounding equals amount-due. If a prepayment or deposit was taken, it must appear in the paid amount field rather than being silently subtracted from the total."
+terms = ["BT-115", "BT-112", "BT-113", "BT-114"]
+
+# ===========================================================================
+# EN 16931 — code lists
+# ===========================================================================
+
+["BR-CL-17"]
+summary = "A VAT category code isn't from the allowed code list."
+why = """
+VAT categories are a fixed vocabulary, not free text. 'S' is standard rate, 'Z' is \
+zero-rated, 'E' is exempt, 'AE' is reverse charge, 'O' is outside scope. Downstream \
+systems and the tax authority branch on these codes, so an unrecognised value means the \
+tax treatment is undefined."""
+fix = "Replace the tax category code with a valid UNCL 5305 value. If you are unsure which applies, the distinction that catches people out is zero-rated (Z, taxable at 0%) versus exempt (E, not taxable) — they are treated differently for input VAT recovery."
+terms = ["BT-151", "BT-95", "BT-102"]
+
+# ===========================================================================
+# EN 16931 — security
+# ===========================================================================
+
+["BR-51"]
+summary = "The invoice appears to contain a full payment card number."
+why = """
+Card primary account numbers must never appear in an invoice. Invoices are forwarded, \
+archived for years, and read by many parties — none of which is an environment that meets \
+card data handling standards. This rule exists to stop a compliance document becoming a \
+data breach."""
+fix = "Remove the card number, or truncate it so that only the last four digits remain. If your billing system copies the payment instrument into the invoice automatically, that behaviour needs changing at the source."
+terms = ["BT-87"]
+
+# ===========================================================================
+# PINT base — international billing model
+# ===========================================================================
+
+# Note: this is the PINT-base twin of ibr-179-ae below. The same duplicate buyer
+# identifier fires at BOTH layers under different rule IDs. That is normal and not a
+# bug — the jurisdiction layer restates constraints it also depends on. Expect paired
+# findings, and fix them once.
+["ibr-104"]
+summary = "The buyer's tax identifier appears more than once."
+why = """
+A buyer carries one tax identifier per transaction. Seeing it twice means the document \
+was assembled from overlapping sources — the receiving system cannot decide which is \
+authoritative, so it rejects rather than guessing."""
+fix = "Remove the duplicate buyer tax identifier. This usually appears alongside ibr-179-ae, the UAE jurisdiction rule for the same constraint — one fix clears both."
+terms = ["IBT-048"]
+
+# ===========================================================================
+# PINT AE — UAE jurisdiction rules
+# ===========================================================================
+
+["ibr-179-ae"]
+summary = "The buyer's VAT identifier appears more than once."
+why = """
+A buyer has exactly one VAT registration for a given transaction. A duplicate usually \
+means a party block was copied twice during document assembly, or that two systems each \
+contributed the same identifier. Either way the receiver cannot tell which one is \
+authoritative."""
+fix = "Remove the duplicate. Check for a repeated PartyTaxScheme block under the buyer — that is the usual cause, and it often comes from a merge or template step rather than from data entry."
+terms = ["IBT-048"]
+
+["ibr-135-ae"]
+summary = "The buyer must be identified — by either a buyer identifier or a buyer VAT identifier — for this transaction type."
+why = """
+Most UAE transaction types require the buyer to be identifiable, because the invoice \
+supports the buyer's input VAT claim. Exports are the notable exception, since the buyer \
+is outside the UAE VAT system. If you are seeing this on a domestic supply, the buyer is \
+under-identified."""
+fix = "Add either the buyer identifier or the buyer VAT identifier. If this is genuinely an export, check that the transaction type code is set correctly — the rule is conditional on it, and a wrong type code is the more likely error."
+terms = ["IBT-046", "IBT-048", "BTAE-02"]
+
+["ibr-149-ae"]
+summary = "The buyer's legal registration identifier is required for this combination of scheme identifier and electronic address."
+why = """
+When the buyer is identified through a particular scheme, UAE rules require the \
+underlying legal registration to be stated as well. The electronic address alone \
+identifies a mailbox; the legal registration identifies the entity behind it."""
+fix = "Add the buyer's legal registration identifier. Which document this refers to depends on the registration type — see ibr-183-ae for the permitted types."
+terms = ["IBT-047", "IBT-049", "IBT-049-1"]
+
+["ibr-183-ae"]
+summary = "The buyer's legal registration identifier type isn't one of the permitted UAE values."
+why = """
+UAE e-invoicing recognises a closed set of identity documents for a buyer. The type field \
+tells the receiver and the tax authority which kind of document the identifier refers to, \
+so it cannot be free text."""
+fix = "Set the registration identifier type to one of the permitted values — Commercial/Trade licence, Emirates ID, Passport, or Cabinet decision — matching whichever document the identifier actually comes from."
+terms = ["BTAE-16"]
+
+["ibr-101-ae"]
+summary = "The issuing authority name is missing, and it's required when the buyer is identified by a commercial or trade licence."
+why = """
+Trade licences in the UAE are issued by several different authorities across the emirates \
+and the free zones. The licence number alone is not unique — the issuing authority is what \
+disambiguates it."""
+fix = "Add the authority name that issued the buyer's trade licence, for example the relevant Department of Economic Development or free zone authority."
+terms = ["BTAE-11", "BTAE-16"]
+
+["ibr-010-ae"]
+summary = "The passport issuing country is missing, and it's required when the buyer is identified by passport."
+why = """
+A passport number is only unique within its issuing country. Identifying a buyer by \
+passport without saying which country issued it leaves the identity ambiguous."""
+fix = "Add the passport issuing country code as a two-letter ISO 3166-1 code. This is usually needed when invoicing an individual rather than a registered business."
+terms = ["BTAE-19", "BTAE-16"]
