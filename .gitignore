@@ -42,3 +42,8 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# Private working notes — our shared reference, never published.
+NOTES.md
+scratch/
+rulesets/
