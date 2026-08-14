@@ -106,6 +106,18 @@ if not report.is_valid:
 `validate_bytes()` takes bytes or str; `validate()` takes a path. `Validator` is **not
 thread-safe** — build one per worker, or serialise access.
 
+### Validating beats building
+
+`validate()` / `validate_bytes()` judge a document **exactly as given**. That is the
+primary use, and the only one where the arithmetic rules can actually fail —
+`ibr-co-13`, `ibr-co-15`, `ibr-co-16`, `ibr-123`, `ibr-125` and friends check totals
+that *you* supplied.
+
+`build()` computes every total, so those rules always agree by construction. That is
+convenient when you are constructing a document, and useless when you are checking
+one. Never route a supplied invoice through `build()` to validate it — recomputing a
+caller's total silently repairs their bug and reports compliant.
+
 ## What sahih takes as input, and what it deliberately doesn't
 
 **sahih validates UBL XML.** That is the whole input contract. Worth being explicit
