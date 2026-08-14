@@ -77,6 +77,21 @@ PROFILE_CONSTANTS = {
 
 TWO_PLACES = Decimal("0.01")
 
+#: BTAE-15 / BTAE-16 legal registration identifier types, mapped to the
+#: schemeAgencyID code the rules expect.
+#:
+#: These were not guessable. They come from ibr-183-ae's own test expression, which
+#: enumerates them: schemeAgencyID = ("TL", "CL", "EID", "PAS", "CD"). Before finding
+#: that, build() hardcoded "TL" for everything — so declaring an Emirates ID silently
+#: emitted a trade licence, and no rule objected because the document was well-formed
+#: either way.
+LEGAL_ID_SCHEME: dict[LegalIdType | None, str] = {
+    LegalIdType.TRADE_LICENCE: "TL",
+    LegalIdType.EMIRATES_ID: "EID",
+    LegalIdType.PASSPORT: "PAS",
+    LegalIdType.CABINET_DECISION: "CD",
+}
+
 
 def q(amount: Decimal) -> str:
     """
@@ -131,13 +146,11 @@ def _require_party(party: Party, role: str, *, needs_tax_id: bool) -> None:
             f"whether that number is a trade licence, an Emirates ID or a passport "
             f"(BTAE-16), and emitting the wrong one is silently wrong."
         )
-    if party.legal_id_type and party.legal_id_type is not LegalIdType.TRADE_LICENCE:
+    if party.legal_id_type and party.legal_id_type not in LEGAL_ID_SCHEME:
         raise IncompleteInvoiceError(
-            f"{role}.legal_id_type is {party.legal_id_type.value!r}, and sahih does not "
-            f"yet know the schemeAgencyID code for it. Every official UAE conformance "
-            f"sample uses a trade licence ('TL'). Emitting 'TL' for a passport or "
-            f"Emirates ID would be silently wrong, so this raises instead of guessing. "
-            f"If you know the correct code, it is a one-line fix in build.py."
+            f"{role}.legal_id_type is {party.legal_id_type.value!r}, which has no known "
+            f"schemeAgencyID code. Known: "
+            f"{sorted(t.value for t in LEGAL_ID_SCHEME if t)}."
         )
 
 
@@ -234,7 +247,9 @@ def _party(parent: ET.Element, party: Party, tag: str, currency: str) -> None:
     legal = _el(node, CAC, "PartyLegalEntity")
     _el(legal, CBC, "RegistrationName", party.name)
     if party.legal_id:
-        attrs = {"schemeAgencyID": "TL"}
+        # The code follows the declared type. Hardcoding "TL" here labelled every
+        # passport and Emirates ID as a trade licence, silently.
+        attrs = {"schemeAgencyID": LEGAL_ID_SCHEME.get(party.legal_id_type, "TL")}
         if party.legal_id_authority:
             attrs["schemeAgencyName"] = party.legal_id_authority
         _el(legal, CBC, "CompanyID", party.legal_id, **attrs)

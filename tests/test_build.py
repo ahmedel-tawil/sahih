@@ -211,8 +211,8 @@ def test_decimal_from_float_is_the_trap_we_are_closing():
     assert repr(349.99 * 5 / 100 * 3) == "52.49850000000001"
 
     # And Decimal(float) inherits the imprecision rather than curing it.
-    assert Decimal(349.99) != Decimal("349.99")
-    assert str(Decimal(349.99) * 3).startswith("1049.9700000000000")
+    assert Decimal(349.99) != Decimal("349.99")  # noqa: RUF032 - the point of the test
+    assert str(Decimal(349.99) * 3).startswith("1049.9700000000000")  # noqa: RUF032
 
     # Exact arithmetic, then a single quantisation at emission.
     assert str(Decimal("349.99") * 3) == "1049.97"
@@ -359,11 +359,22 @@ def test_uuid_is_stable_even_without_a_number():
     assert build(invoice(number="")) == build(invoice(number=""))
 
 
-def test_unknown_legal_id_type_raises_rather_than_mislabelling():
+@pytest.mark.parametrize(
+    ("legal_type", "code"),
+    [
+        (LegalIdType.TRADE_LICENCE, b"TL"),
+        (LegalIdType.EMIRATES_ID, b"EID"),
+        (LegalIdType.PASSPORT, b"PAS"),
+        (LegalIdType.CABINET_DECISION, b"CD"),
+    ],
+)
+def test_legal_id_type_maps_to_the_right_scheme_code(legal_type, code):
     """
-    schemeAgencyID is hardcoded 'TL'. Emitting that for a passport would silently
-    label it a trade licence, and no rule would object — the document is well-formed
-    either way. So this raises instead of guessing.
+    schemeAgencyID was hardcoded 'TL', so an Emirates ID emitted as a trade licence —
+    silently, since the document is well-formed either way and no rule objects.
+
+    The codes are not guessable. They come from ibr-183-ae's own test expression,
+    which enumerates them: ("TL", "CL", "EID", "PAS", "CD").
     """
-    with pytest.raises(IncompleteInvoiceError, match="schemeAgencyID"):
-        build(invoice(seller=party(legal_id_type=LegalIdType.PASSPORT)))
+    xml = build(invoice(seller=party(legal_id_type=legal_type)))
+    assert b'schemeAgencyID="' + code + b'"' in xml

@@ -242,6 +242,5 @@ class Invoice:
         if self.issue_date is not None and not isinstance(self.issue_date, date):
             # A type error, not a missing value: there is no element we could emit.
             raise ModelError(
-                f"Invoice.issue_date must be a date or None, "
-                f"got {type(self.issue_date).__name__}"
+                f"Invoice.issue_date must be a date or None, got {type(self.issue_date).__name__}"
             )

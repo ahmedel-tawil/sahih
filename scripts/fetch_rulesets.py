@@ -32,6 +32,10 @@ PHIVE_RAW = (
     "https://raw.githubusercontent.com/phax/phive-rules/master/"
     "phive-rules-peppol-pint/src/main/resources/external/schematron/pint-ae"
 )
+PHIVE_SCH = (
+    "https://raw.githubusercontent.com/phax/phive-rules/master/"
+    "phive-rules-peppol-pint/src/test/resources/external/rule-source/pint-ae"
+)
 PHIVE_TESTS = (
     "https://raw.githubusercontent.com/phax/phive-rules/master/"
     "phive-rules-peppol-pint/src/test/resources/external/test-files/pint-ae"
@@ -67,6 +71,16 @@ def fetch_pint_ae(version: str) -> None:
     print(f"\nPINT AE {version} — rule sets")
     for name in ("PINT-UBL-validation-preprocessed.xslt", "PINT-jurisdiction-aligned-rules.xslt"):
         write(DEST / "pint-ae" / version / name, get(f"{PHIVE_RAW}/{version}/billing/{name}"))
+
+    # The Schematron SOURCE, not just the compiled XSLT. It carries the rule context,
+    # the test expression and the severity flag as structured attributes — everything
+    # the catalogue needs, and far more reliable than regexing compiled output.
+    print(f"\nPINT AE {version} — rule sources (.sch) for the catalogue")
+    for name in ("PINT-UBL-validation-preprocessed.sch", "PINT-jurisdiction-aligned-rules.sch"):
+        try:
+            write(DEST / "pint-ae" / version / name, get(f"{PHIVE_SCH}/{version}/billing/{name}"))
+        except Exception as exc:
+            print(f"  (skipped {name}: {exc})")
 
     print(f"\nPINT AE {version} — official UAE conformance invoices")
     for sample in UAE_SAMPLES:

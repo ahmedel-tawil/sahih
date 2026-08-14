@@ -47,6 +47,7 @@ from .model import (
     VatCategory,
 )
 from .models import Finding, Severity, StackedReport, ValidationReport
+from .rules import CatalogueStats, Rule, by_id, catalogue, stats
 from .svrl import SVRLParseError, parse_svrl
 
 __version__ = "0.1.0"
@@ -54,6 +55,7 @@ __version__ = "0.1.0"
 __all__ = [
     "Address",
     "Allowance",
+    "CatalogueStats",
     "Explainer",
     "Explanation",
     "ExplanationSource",
@@ -65,6 +67,7 @@ __all__ = [
     "Line",
     "ModelError",
     "Party",
+    "Rule",
     "RuleSet",
     "RuleSetError",
     "SVRLParseError",
@@ -78,5 +81,8 @@ __all__ = [
     "VatCategory",
     "__version__",
     "build",
+    "by_id",
+    "catalogue",
     "parse_svrl",
+    "stats",
 ]

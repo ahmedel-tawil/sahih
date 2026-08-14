@@ -174,6 +174,29 @@ class Explainer:
         """How many rules currently have curated explanations."""
         return len(self._curated)
 
+    def entries(self) -> tuple[Explanation, ...]:
+        """
+        Every curated explanation, as data.
+
+        For listing what guidance exists — in a UI, in docs, or to an agent deciding
+        whether it needs to fall back to the rule's own wording. Each entry has no
+        attached `finding`, since these are the knowledge base rather than results.
+        """
+        out = []
+        for rule_id, entry in sorted(self._curated.items()):
+            terms = entry.get("terms", [])
+            out.append(
+                Explanation(
+                    rule_id=rule_id,
+                    summary=_normalise(entry.get("summary", "")),
+                    why=_normalise(entry.get("why", "")),
+                    fix=_normalise(entry.get("fix", "")),
+                    source=ExplanationSource.CURATED,
+                    terms=tuple(str(t) for t in terms) if isinstance(terms, list) else (),
+                )
+            )
+        return tuple(out)
+
     def is_curated(self, rule_id: str) -> bool:
         return rule_id in self._curated
 
