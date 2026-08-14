@@ -60,15 +60,17 @@ Sketch, not final signatures:
 
 ```python
 class VatCategory(StrEnum):
-    STANDARD      = "S"   # 5% in the UAE
-    ZERO_RATED    = "Z"   # taxable at 0%
-    EXEMPT        = "E"   # not taxable
+    STANDARD = "S"  # 5% in the UAE
+    ZERO_RATED = "Z"  # taxable at 0%
+    EXEMPT = "E"  # not taxable
     REVERSE_CHARGE = "AE"
     OUTSIDE_SCOPE = "O"
+
 
 class ItemType(StrEnum):
     GOODS = "G"
     SERVICES = "S"
+
 
 @dataclass(frozen=True)
 class Line:
@@ -76,11 +78,12 @@ class Line:
     description: str
     quantity: Decimal
     unit_price: Decimal
-    vat_category: VatCategory        # required — never inferred. See below.
+    vat_category: VatCategory  # required — never inferred. See below.
     vat_rate: Decimal
-    item_type: ItemType              # required
+    item_type: ItemType  # required
     unit_code: str = "H87"
-    service_accounting_code: str | None = None   # required when item_type is SERVICES
+    service_accounting_code: str | None = None  # required when item_type is SERVICES
+
 
 @dataclass(frozen=True)
 class Invoice:
@@ -89,7 +92,7 @@ class Invoice:
     currency: str
     seller: Party
     buyer: Party
-    lines: tuple[Line, ...]          # non-empty
+    lines: tuple[Line, ...]  # non-empty
     due_date: date | None = None
     allowances: tuple[Allowance, ...] = ()
     # NOTE: no totals field. See "the builder computes money".
@@ -97,8 +100,10 @@ class Invoice:
 
 ### Money is `Decimal`, always
 
-The model refuses `float`. Not a lint preference — `349.99 * 3` is
-`1049.9699999999998` in IEEE 754, which produced five validation failures in testing.
+The model refuses `float`. Not a lint preference. The drift is subtler than the usual
+example suggests: `349.99 * 3` is exactly `1049.97`, but the VAT step
+`349.99 * 5 / 100 * 3` gives `52.49850000000001`, which is the value that reached a real
+document in testing and tripped three decimal-places rules.
 Passing a float raises at construction rather than surfacing as a compliance error
 three layers later.
 

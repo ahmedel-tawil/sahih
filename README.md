@@ -86,10 +86,12 @@ broken build.
 from sahih import RuleSet, Validator, Explainer
 
 # Compile once at startup — compiling costs ~300ms, validating costs ~5ms.
-validator = Validator([
-    RuleSet("PINT base",      "rulesets/pint-ae/2026.5/PINT-UBL-validation-preprocessed.xslt"),
-    RuleSet("PINT-AE 2026.5", "rulesets/pint-ae/2026.5/PINT-jurisdiction-aligned-rules.xslt"),
-])
+validator = Validator(
+    [
+        RuleSet("PINT base", "rulesets/pint-ae/2026.5/PINT-UBL-validation-preprocessed.xslt"),
+        RuleSet("PINT-AE 2026.5", "rulesets/pint-ae/2026.5/PINT-jurisdiction-aligned-rules.xslt"),
+    ]
+)
 validator.warm_up()
 explainer = Explainer()
 

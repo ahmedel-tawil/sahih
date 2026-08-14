@@ -25,6 +25,7 @@ Each layer is versioned independently and each can fail for different reasons, s
 findings stay tagged with the layer that produced them throughout.
 """
 
+from .build import build
 from .engine import RuleSet, Validator
 from .exceptions import (
     RuleSetError,
@@ -33,16 +34,37 @@ from .exceptions import (
     ValidationError,
 )
 from .explain import Explainer, Explanation, ExplanationSource
+from .model import (
+    Address,
+    Allowance,
+    IncompleteInvoiceError,
+    Invoice,
+    ItemType,
+    LegalIdType,
+    Line,
+    ModelError,
+    Party,
+    VatCategory,
+)
 from .models import Finding, Severity, StackedReport, ValidationReport
 from .svrl import SVRLParseError, parse_svrl
 
 __version__ = "0.1.0"
 
 __all__ = [
+    "Address",
+    "Allowance",
     "Explainer",
     "Explanation",
     "ExplanationSource",
     "Finding",
+    "IncompleteInvoiceError",
+    "Invoice",
+    "ItemType",
+    "LegalIdType",
+    "Line",
+    "ModelError",
+    "Party",
     "RuleSet",
     "RuleSetError",
     "SVRLParseError",
@@ -53,6 +75,8 @@ __all__ = [
     "ValidationError",
     "ValidationReport",
     "Validator",
+    "VatCategory",
     "__version__",
+    "build",
     "parse_svrl",
 ]
