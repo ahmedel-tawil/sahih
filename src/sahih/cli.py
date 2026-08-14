@@ -37,6 +37,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from . import __version__
+from .binding import Mode, generate
 from .engine import RuleSet, Validator
 from .exceptions import SahihError
 from .explain import Explainer, Explanation
@@ -341,6 +342,29 @@ def cmd_rules(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
+def cmd_init(args: argparse.Namespace) -> int:
+    """Generate a binding file, optionally inferred from the caller's own data."""
+    samples = []
+    for path in args.from_ or []:
+        try:
+            samples.append(json.loads(Path(path).read_text(encoding="utf-8")))
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"Could not read {path}: {exc}", file=sys.stderr)
+            return 2
+
+    text = generate(samples, mode=Mode(args.mode))
+
+    if args.output:
+        Path(args.output).write_text(text, encoding="utf-8")
+        todos = text.count("TODO")
+        decisions = text.count("const:???")
+        print(f"Wrote {args.output} ({args.mode} mode)", file=sys.stderr)
+        print(f"  {todos} TODO(s), {decisions} decision(s) to answer.", file=sys.stderr)
+    else:
+        sys.stdout.write(text)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sahih",
@@ -377,6 +401,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="also report non-blocking findings",
     )
     validate.set_defaults(func=cmd_validate)
+
+    init = sub.add_parser("init", help="generate a binding file")
+    init.add_argument(
+        "--mode",
+        choices=[m.value for m in Mode],
+        default=Mode.MINIMAL.value,
+        help="minimal: only what a valid invoice requires. full: the whole menu.",
+    )
+    init.add_argument(
+        "--from",
+        dest="from_",
+        nargs="+",
+        metavar="SAMPLE.json",
+        help="infer paths from your own data. Omit for a blank template.",
+    )
+    init.add_argument("-o", "--output", metavar="FILE")
+    init.set_defaults(func=cmd_init)
 
     rules = sub.add_parser("rules", help="show rule sets and curation coverage")
     rules.add_argument("--rules", type=Path, default=DEFAULT_RULES_DIR, metavar="DIR")
