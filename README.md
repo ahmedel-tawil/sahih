@@ -166,7 +166,12 @@ uv run mypy src      # type check
 - [x] Explanation layer — actionable diagnosis, not rule text
 - [x] CLI
 - [x] In-memory validation for application use
-- [ ] Wider curation coverage (18 of 420 rules today)
+- [ ] Let the rules speak: stop pre-empting rules that fire on their own
+- [ ] Wider curation coverage (18 of 420 rules today) — now on the critical path
+- [ ] VAT-inclusive pricing (`TaxIncludedIndicator` is hardcoded false)
+- [ ] Optional `expected_total` to reconcile against the caller's own figure
+- [ ] Arabic explanations
+- [ ] PDF intake (hybrid PDF/A-3 only; scans stay out of the verdict)
 - [ ] MCP server
 - [ ] Publish to PyPI
 
