@@ -108,9 +108,14 @@ def test_line_ids_are_sequential():
     assert ids == ["1", "2", "3"]
 
 
-def test_empty_lines_is_refused():
-    with pytest.raises(IncompleteInvoiceError, match="nothing to charge"):
-        invoice(lines=())
+def test_empty_lines_builds_so_the_rules_can_object():
+    """
+    We do NOT refuse this. ibr-016 and ibr-151-ae catch it, and an authoritative
+    rule id is more useful than our prose — especially to an agent, which can look
+    up 'ibr-016' but can only paraphrase a sentence.
+    """
+    xml = build(invoice(lines=()))
+    assert b"<cac:InvoiceLine>" not in xml
 
 
 # ==========================================================================
@@ -279,12 +284,11 @@ def test_vat_category_must_be_explicit():
         line(vat_category="S")  # a bare string, not the enum
 
 
-def test_services_require_an_accounting_code():
-    with pytest.raises(IncompleteInvoiceError, match="service_accounting_code"):
-        line(item_type=ItemType.SERVICES)
-
-    ok = line(item_type=ItemType.SERVICES, service_accounting_code="996411")
-    assert ok.item_type is ItemType.SERVICES
+def test_services_without_an_accounting_code_is_left_to_the_rules():
+    """ibr-185-ae catches this. Shadowing it would hide the rule id."""
+    built = line(item_type=ItemType.SERVICES)
+    assert built.item_type is ItemType.SERVICES
+    assert built.service_accounting_code is None
 
 
 # ==========================================================================
@@ -318,10 +322,48 @@ def test_unknown_profile_is_rejected():
         build(invoice(), profile="pint-xx")
 
 
-def test_due_date_required_when_something_is_payable():
+def test_missing_due_date_builds_so_ibr_127_ae_can_report_it():
+    """We stopped shadowing this rule. The document builds; validation objects."""
+    xml = build(invoice(due_date=None))
+    assert b"<cbc:DueDate>" not in xml
+
+
+# ==========================================================================
+# Let the rules speak — what we deliberately DO NOT check
+# ==========================================================================
+
+
+@pytest.mark.parametrize(
+    ("label", "kwargs"),
+    [
+        ("no invoice number", {"number": ""}),
+        ("no issue date", {"issue_date": None}),
+        ("no due date", {"due_date": None}),
+        ("no lines", {"lines": ()}),
+    ],
+)
+def test_absent_data_still_builds(label, kwargs):
     """
-    ibr-127-ae. A conditional rule a caller cannot be expected to know — and cheaper
-    to fail here than after the document has been transmitted.
+    Each of these is caught by the rule set (ibr-002, ibr-003, ibr-127-ae, ibr-016).
+    Refusing here would mean the rule set is never consulted, and the caller gets our
+    wording instead of an identifier they can look up.
     """
-    with pytest.raises(IncompleteInvoiceError, match="due_date"):
-        build(invoice(due_date=None))
+    build(invoice(**kwargs))
+
+
+def test_missing_number_omits_the_element_entirely():
+    assert b"<cbc:ID>" not in build(invoice(number="")).split(b"<cac:")[0]
+
+
+def test_uuid_is_stable_even_without_a_number():
+    assert build(invoice(number="")) == build(invoice(number=""))
+
+
+def test_unknown_legal_id_type_raises_rather_than_mislabelling():
+    """
+    schemeAgencyID is hardcoded 'TL'. Emitting that for a passport would silently
+    label it a trade licence, and no rule would object — the document is well-formed
+    either way. So this raises instead of guessing.
+    """
+    with pytest.raises(IncompleteInvoiceError, match="schemeAgencyID"):
+        build(invoice(seller=party(legal_id_type=LegalIdType.PASSPORT)))

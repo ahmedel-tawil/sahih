@@ -15,11 +15,29 @@ WHAT THE BUILDER GUARANTEES
 1. Every line you supply appears in the output. Asserted, not assumed.
 2. Every allowance you supply appears in the output.
 3. Totals reconcile, because you never supply them — they are derived here.
-4. A required field that is missing RAISES, rather than producing a document that
-   passes validation because the checking rule had no context node to attach to.
+4. Data whose ABSENCE would silence its own checking rule raises instead.
 
-Guarantee 4 is the important one. It is the only defence against the failure mode
-validation cannot see: an invoice that is silently incomplete.
+LET THE RULES SPEAK
+-------------------
+Guarantee 4 is deliberately narrow, and the narrowness is the point.
+
+The builder does NOT check for a missing invoice number, issue date, due date,
+seller name, buyer endpoint, invoice line, or service accounting code — because
+the rule set already catches every one of them:
+
+    invoice number     ibr-002        seller name    ibr-006
+    issue date         ibr-003        buyer endpoint ibr-080
+    due date           ibr-127-ae     no lines       ibr-016
+    services w/o SAC   ibr-185-ae
+
+Shadowing those would replace an authoritative rule identifier with our own prose.
+That is worse for a human (they cannot look ours up) and much worse for an agent,
+which needs a stable id to reason about rather than a sentence to paraphrase.
+
+We intervene only where the rule CANNOT speak. A missing tax id emits no
+`cac:PartyTaxScheme`, so the rules that check it have no context node and never
+run — the invoice validates clean while being incomplete. That silence is the
+only thing worth pre-empting.
 
 XML SAFETY
 ----------
@@ -38,6 +56,7 @@ from .model import (
     Allowance,
     IncompleteInvoiceError,
     Invoice,
+    LegalIdType,
     Line,
     Party,
     VatCategory,
@@ -90,11 +109,8 @@ def _require_party(party: Party, role: str, *, needs_tax_id: bool) -> None:
     individual, a non-resident buyer on an export. It is the caller's decision, made
     explicitly, rather than something inferred from the value being absent.
     """
-    if not party.name:
-        raise IncompleteInvoiceError(f"{role}.name is required.")
-    if not party.electronic_id:
-        raise IncompleteInvoiceError(f"{role}.electronic_id is required (ibt-049).")
-
+    # name and electronic_id are NOT checked here. ibr-006 and ibr-080 catch them,
+    # and an authoritative rule id beats our prose — see "let the rules speak".
     if needs_tax_id and not party.tax_id:
         raise IncompleteInvoiceError(
             f"{role}.tax_id (TRN) is missing.\n"
@@ -105,11 +121,23 @@ def _require_party(party: Party, role: str, *, needs_tax_id: bool) -> None:
             f"  is genuinely untaxed (B2C individual, non-resident on an export)."
         )
 
+    # This one stays, and is NOT a shadowed rule. The type determines the
+    # schemeAgencyID we emit; without it we would have to guess, and guessing wrong
+    # labels an Emirates ID as a trade licence — silently, and with no rule to catch
+    # it because the document would be well-formed either way.
     if party.legal_id and not party.legal_id_type:
         raise IncompleteInvoiceError(
-            f"{role}.legal_id was supplied without legal_id_type. The receiver cannot "
-            f"tell whether that number is a trade licence, an Emirates ID or a passport "
-            f"(BTAE-16)."
+            f"{role}.legal_id was supplied without legal_id_type. sahih cannot tell "
+            f"whether that number is a trade licence, an Emirates ID or a passport "
+            f"(BTAE-16), and emitting the wrong one is silently wrong."
+        )
+    if party.legal_id_type and party.legal_id_type is not LegalIdType.TRADE_LICENCE:
+        raise IncompleteInvoiceError(
+            f"{role}.legal_id_type is {party.legal_id_type.value!r}, and sahih does not "
+            f"yet know the schemeAgencyID code for it. Every official UAE conformance "
+            f"sample uses a trade licence ('TL'). Emitting 'TL' for a passport or "
+            f"Emirates ID would be silently wrong, so this raises instead of guessing. "
+            f"If you know the correct code, it is a one-line fix in build.py."
         )
 
 
@@ -301,11 +329,14 @@ def build(
     for tag, value in constants.items():
         _el(root, CBC, tag, value)
 
-    _el(root, CBC, "ID", invoice.number)
+    # Omitted when absent, so ibr-002 / ibr-003 can report it rather than us.
+    if invoice.number:
+        _el(root, CBC, "ID", invoice.number)
     # Deterministic from the invoice number: the same invoice built twice is
     # byte-identical, which makes diffing and caching meaningful.
-    _el(root, CBC, "UUID", str(uuid.uuid5(uuid.NAMESPACE_DNS, invoice.number)))
-    _el(root, CBC, "IssueDate", invoice.issue_date.isoformat())
+    _el(root, CBC, "UUID", str(uuid.uuid5(uuid.NAMESPACE_DNS, invoice.number or "unnumbered")))
+    if invoice.issue_date:
+        _el(root, CBC, "IssueDate", invoice.issue_date.isoformat())
     if invoice.due_date:
         _el(root, CBC, "DueDate", invoice.due_date.isoformat())
     _el(root, CBC, "InvoiceTypeCode", invoice.invoice_type_code)
@@ -353,15 +384,8 @@ def build(
         _el(totals, CBC, "AllowanceTotalAmount", q(allowance_total), currencyID=cur)
     _el(totals, CBC, "PayableAmount", q(net + total_tax), currencyID=cur)
 
-    # ibr-127-ae: a due date is required once there is anything to pay. Conditional
-    # rules like this are exactly what a caller cannot be expected to know, and the
-    # failure is far cheaper here than after a document has been transmitted.
-    if (net + total_tax) > 0 and invoice.due_date is None:
-        raise IncompleteInvoiceError(
-            "Invoice.due_date is missing, and the payable amount is "
-            f"{q(net + total_tax)} {cur}. A due date is required whenever there is an "
-            "amount due (ibr-127-ae)."
-        )
+    # NOTE: no due-date check here. ibr-127-ae catches it, and reporting it as a rule
+    # finding is more useful than raising — the caller gets an id they can look up.
 
     for index, line in enumerate(invoice.lines, start=1):
         _line(root, index, line, cur)

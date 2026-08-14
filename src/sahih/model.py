@@ -178,12 +178,10 @@ class Line:
             )
         if not isinstance(self.item_type, ItemType):
             raise ModelError(f"Line.item_type must be an ItemType, got {self.item_type!r}")
-        if self.item_type is ItemType.SERVICES and not self.service_accounting_code:
-            raise IncompleteInvoiceError(
-                f"Line {self.name!r} is item_type SERVICES, which requires a "
-                "service_accounting_code (ibr-185-ae). Supply one, or classify it as GOODS "
-                "if that is the correct treatment."
-            )
+        # NOTE: we deliberately do NOT check that SERVICES carries a
+        # service_accounting_code. ibr-185-ae catches that, with an authoritative
+        # rule id an agent can cite. Shadowing it would replace that id with our
+        # prose. See "let the rules speak" in the module docstring.
 
     @property
     def net(self) -> Decimal:
@@ -220,11 +218,11 @@ class Invoice:
     Deliberately has no totals. See rule 2 in the module docstring.
     """
 
-    number: str
-    issue_date: date
     seller: Party
     buyer: Party
     lines: tuple[Line, ...]
+    number: str = ""
+    issue_date: date | None = None
     currency: str = "AED"
     due_date: date | None = None
     allowances: tuple[Allowance, ...] = field(default_factory=tuple)
@@ -237,13 +235,13 @@ class Invoice:
         object.__setattr__(self, "lines", tuple(self.lines))
         object.__setattr__(self, "allowances", tuple(self.allowances))
 
-        if not self.number:
-            raise IncompleteInvoiceError("Invoice.number is required (ibt-001).")
-        if not self.lines:
-            raise IncompleteInvoiceError(
-                "Invoice.lines is empty. An invoice with no lines has nothing to charge for."
-            )
-        if not isinstance(self.issue_date, date):
+        # Deliberately permissive. A missing number, issue date or line is caught by
+        # ibr-002, ibr-003 and ibr-016 respectively — with rule identifiers a caller
+        # (or an agent) can look up. Refusing here would replace those with our own
+        # wording and stop the rule set from ever being consulted.
+        if self.issue_date is not None and not isinstance(self.issue_date, date):
+            # A type error, not a missing value: there is no element we could emit.
             raise ModelError(
-                f"Invoice.issue_date must be a date, got {type(self.issue_date).__name__}"
+                f"Invoice.issue_date must be a date or None, "
+                f"got {type(self.issue_date).__name__}"
             )
