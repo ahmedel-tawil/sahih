@@ -167,10 +167,12 @@ uv run mypy src      # type check
 - [x] CLI
 - [x] In-memory validation for application use
 - [ ] Let the rules speak: stop pre-empting rules that fire on their own
-- [ ] Wider curation coverage (18 of 420 rules today) — now on the critical path
+- [ ] Curation targeting: 136 of 304 pint-ae rules are worth explaining; 5 done.
+      The other 168 are self-evident and deliberately left to their own text.
+- [ ] Port or drop 11 curated EN 16931 rules that never fire under `pint-ae`
 - [ ] VAT-inclusive pricing (`TaxIncludedIndicator` is hardcoded false)
 - [ ] Optional `expected_total` to reconcile against the caller's own figure
-- [ ] Arabic explanations
+- [ ] Arabic explanations (Arabic invoice *content* already works)
 - [ ] PDF intake (hybrid PDF/A-3 only; scans stay out of the verdict)
 - [ ] MCP server
 - [ ] Publish to PyPI
