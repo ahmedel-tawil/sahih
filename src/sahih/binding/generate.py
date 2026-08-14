@@ -320,8 +320,8 @@ def generate(
                 leaf = path.split(".")[-1]
                 if path not in placed and not any(path in p for p in placed) and leaf not in placed:
                     unplaced.append((path, kind))
-        seen: set[str] = set()
-        rows = [(p, k) for p, k in sorted(unplaced) if not (p in seen or seen.add(p))]
+        # dict preserves first-seen order and dedupes by path in one pass.
+        rows = list(dict(sorted(unplaced)).items())
         if rows:
             out.append("")
             out.append("# UNPLACED — present in your data, not bound to anything.")
