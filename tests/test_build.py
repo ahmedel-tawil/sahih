@@ -24,6 +24,7 @@ import pytest
 from sahih import (
     Address,
     Allowance,
+    DeclaredTotals,
     IncompleteInvoiceError,
     Invoice,
     ItemType,
@@ -378,3 +379,58 @@ def test_legal_id_type_maps_to_the_right_scheme_code(legal_type, code):
     """
     xml = build(invoice(seller=party(legal_id_type=legal_type)))
     assert b'schemeAgencyID="' + code + b'"' in xml
+
+
+# ==========================================================================
+# Declared totals — the JSON path as a real validator
+# ==========================================================================
+
+
+def test_totals_are_derived_when_nothing_is_declared():
+    xml = build(invoice(lines=(line("3", "349.99"),)))
+    assert amount(xml, "PayableAmount") == Decimal("1102.47")
+
+
+def test_declared_total_is_emitted_verbatim():
+    """
+    The caller's figure, unchanged. Recomputing it would silently repair their bug and
+    report compliant — the worst answer to 'is this invoice correct?'
+    """
+    xml = build(invoice(declared=DeclaredTotals(payable=Decimal("9999.99"))))
+    assert amount(xml, "PayableAmount") == Decimal("9999.99")
+
+
+def test_declared_values_are_not_quantised():
+    """
+    A caller writing 1102.4685 is telling us that is what their system produced.
+    ibr-125 exists to say so; rounding here would hide the defect being asked about.
+    """
+    xml = build(invoice(declared=DeclaredTotals(tax_amount=Decimal("52.4985"))))
+    assert b"52.4985" in xml
+
+
+def test_declaration_is_partial_and_independent():
+    """Declare what you hold; the rest stays derived."""
+    xml = build(
+        invoice(lines=(line("3", "349.99"),), declared=DeclaredTotals(payable=Decimal("1.00")))
+    )
+
+    assert amount(xml, "PayableAmount") == Decimal("1.00")  # declared
+    assert amount(xml, "LineExtensionAmount") == Decimal("1049.97")  # still derived
+
+
+def test_declared_totals_reject_float():
+    with pytest.raises(ModelError, match="float"):
+        DeclaredTotals(payable=1102.47)
+
+
+def test_empty_declaration_behaves_as_none():
+    a = build(invoice(declared=DeclaredTotals()))
+    b = build(invoice())
+    assert a == b
+    assert DeclaredTotals().is_empty
+
+
+def test_allowance_total_can_be_declared_without_allowances():
+    xml = build(invoice(declared=DeclaredTotals(allowance_total=Decimal("50.00"))))
+    assert amount(xml, "AllowanceTotalAmount") == Decimal("50.00")

@@ -37,6 +37,7 @@ from .explain import Explainer, Explanation, ExplanationSource
 from .model import (
     Address,
     Allowance,
+    DeclaredTotals,
     IncompleteInvoiceError,
     Invoice,
     ItemType,
@@ -56,6 +57,7 @@ __all__ = [
     "Address",
     "Allowance",
     "CatalogueStats",
+    "DeclaredTotals",
     "Explainer",
     "Explanation",
     "ExplanationSource",

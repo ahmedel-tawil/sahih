@@ -54,6 +54,7 @@ from xml.etree import ElementTree as ET
 
 from .model import (
     Allowance,
+    DeclaredTotals,
     IncompleteInvoiceError,
     Invoice,
     LegalIdType,
@@ -374,7 +375,13 @@ def build(
     total_tax = sum((g["tax"] for g in groups.values()), Decimal(0))
 
     tax_total = _el(root, CAC, "TaxTotal")
-    _el(tax_total, CBC, "TaxAmount", q(total_tax), currencyID=cur)
+    _el(
+        tax_total, CBC, "TaxAmount",
+        str(invoice.declared.tax_amount)
+        if invoice.declared and invoice.declared.tax_amount is not None
+        else q(total_tax),
+        currencyID=cur,
+    )
     _el(tax_total, CBC, "TaxIncludedIndicator", "false")
     for (category, rate), bucket in groups.items():
         subtotal = _el(tax_total, CAC, "TaxSubtotal")
@@ -385,19 +392,29 @@ def build(
         _el(cat, CBC, "Percent", rate)
         _el(_el(cat, CAC, "TaxScheme"), CBC, "ID", "VAT")
 
-    # Every total below is derived. The caller cannot supply any of them, which is
-    # what makes ibr-co-15 unreachable rather than merely tested for.
+    # Totals are DERIVED by default, which makes an inconsistent document impossible
+    # to construct. When `invoice.declared` supplies a figure, that figure is emitted
+    # verbatim instead — so the arithmetic rules judge the caller's arithmetic rather
+    # than ours. See DeclaredTotals for why that matters.
     line_total = sum((line.net for line in invoice.lines), Decimal(0))
     allowance_total = sum((a.amount for a in invoice.allowances), Decimal(0))
     net = line_total - allowance_total
+    d = invoice.declared or DeclaredTotals()
+
+    def pick(declared: Decimal | None, computed: Decimal) -> str:
+        # Declared values are emitted UNQUANTISED. A caller writing "1102.4685" is
+        # telling us that is what their system produced, and ibr-125 exists to say so.
+        # Rounding it here would hide the very defect they are asking about.
+        return str(declared) if declared is not None else q(computed)
 
     totals = _el(root, CAC, "LegalMonetaryTotal")
-    _el(totals, CBC, "LineExtensionAmount", q(line_total), currencyID=cur)
-    _el(totals, CBC, "TaxExclusiveAmount", q(net), currencyID=cur)
-    _el(totals, CBC, "TaxInclusiveAmount", q(net + total_tax), currencyID=cur)
-    if invoice.allowances:
-        _el(totals, CBC, "AllowanceTotalAmount", q(allowance_total), currencyID=cur)
-    _el(totals, CBC, "PayableAmount", q(net + total_tax), currencyID=cur)
+    _el(totals, CBC, "LineExtensionAmount", pick(d.line_extension, line_total), currencyID=cur)
+    _el(totals, CBC, "TaxExclusiveAmount", pick(d.tax_exclusive, net), currencyID=cur)
+    _el(totals, CBC, "TaxInclusiveAmount", pick(d.tax_inclusive, net + total_tax), currencyID=cur)
+    if invoice.allowances or d.allowance_total is not None:
+        _el(totals, CBC, "AllowanceTotalAmount",
+            pick(d.allowance_total, allowance_total), currencyID=cur)
+    _el(totals, CBC, "PayableAmount", pick(d.payable, net + total_tax), currencyID=cur)
 
     # NOTE: no due-date check here. ibr-127-ae catches it, and reporting it as a rule
     # finding is more useful than raising — the caller gets an id they can look up.

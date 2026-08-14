@@ -211,6 +211,67 @@ class Allowance:
 
 
 @dataclass(frozen=True, slots=True)
+class DeclaredTotals:
+    """
+    Totals as YOUR system computed them — emitted verbatim, judged by the rules.
+
+    WHY THIS EXISTS
+    ---------------
+    By default the builder derives every total, which makes an inconsistent invoice
+    impossible to construct. Convenient when you are *building* a document; useless
+    when you are *validating* one, because it means the arithmetic rules
+    (`ibr-co-10`, `ibr-co-13`, `ibr-co-15`, `ibr-co-16`, `ibr-123`, `ibr-125`) can
+    never fail — we derived the numbers, so they always agree.
+
+    But those rules are precisely what someone checking a real invoice needs. Their
+    totals may be wrong, and that is the question they are asking. Recomputing
+    silently repairs the bug and reports compliant.
+
+    Supply this and sahih emits your figures unchanged, so the rules judge them.
+
+    PARTIAL IS FINE
+    ---------------
+    Every field is optional and independent. Declare the ones your system holds; the
+    rest are still derived. Declaring only `payable` is a perfectly sensible way to
+    ask "does my payable amount agree with everything else?"
+
+    Deliberately opt-in: you cannot supply an inconsistent total by accident, only on
+    purpose. That keeps the building use case safe while making the validating use
+    case honest.
+    """
+
+    #: ibt-106 — sum of invoice line net amounts.
+    line_extension: Decimal | None = None
+    #: ibt-107 — sum of document-level allowances.
+    allowance_total: Decimal | None = None
+    #: ibt-109 — total without tax.
+    tax_exclusive: Decimal | None = None
+    #: ibt-110 — total tax amount.
+    tax_amount: Decimal | None = None
+    #: ibt-112 — total with tax.
+    tax_inclusive: Decimal | None = None
+    #: ibt-115 — amount due for payment.
+    payable: Decimal | None = None
+
+    def __post_init__(self) -> None:
+        for name in (
+            "line_extension", "allowance_total", "tax_exclusive",
+            "tax_amount", "tax_inclusive", "payable",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(self, name, _money(value, f"DeclaredTotals.{name}"))
+
+    @property
+    def is_empty(self) -> bool:
+        return all(
+            getattr(self, n) is None
+            for n in ("line_extension", "allowance_total", "tax_exclusive",
+                      "tax_amount", "tax_inclusive", "payable")
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class Invoice:
     """
     A complete invoice, ready to build.
@@ -226,6 +287,9 @@ class Invoice:
     currency: str = "AED"
     due_date: date | None = None
     allowances: tuple[Allowance, ...] = field(default_factory=tuple)
+    #: Supply to have YOUR totals emitted and judged, instead of ours computed.
+    #: See DeclaredTotals — this is what turns the JSON path into a real validator.
+    declared: DeclaredTotals | None = None
     payment_means_code: str = "1"  # UN/ECE 4461. '1' = instrument not defined.
     invoice_type_code: str = "380"  # commercial invoice
     note: str | None = None

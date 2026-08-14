@@ -118,6 +118,19 @@ convenient when you are constructing a document, and useless when you are checki
 one. Never route a supplied invoice through `build()` to validate it — recomputing a
 caller's total silently repairs their bug and reports compliant.
 
+If you integrate via the model rather than raw XML, pass `DeclaredTotals` so your
+figures are emitted verbatim and judged:
+
+```python
+from sahih import DeclaredTotals
+
+invoice = Invoice(..., declared=DeclaredTotals(payable=Decimal("1857.41")))
+```
+
+Every field is optional and independent — declare what your system holds, the rest
+stays derived. Declaring a total is deliberate, so you still cannot supply an
+inconsistent one by accident.
+
 ## What sahih takes as input, and what it deliberately doesn't
 
 **sahih validates UBL XML.** That is the whole input contract. Worth being explicit
@@ -183,7 +196,6 @@ uv run mypy src      # type check
       The other 168 are self-evident and deliberately left to their own text.
 - [ ] Port or drop 11 curated EN 16931 rules that never fire under `pint-ae`
 - [ ] VAT-inclusive pricing (`TaxIncludedIndicator` is hardcoded false)
-- [ ] Optional `expected_total` to reconcile against the caller's own figure
 - [ ] Arabic explanations (Arabic invoice *content* already works)
 - [ ] PDF intake (hybrid PDF/A-3 only; scans stay out of the verdict)
 - [ ] MCP server
