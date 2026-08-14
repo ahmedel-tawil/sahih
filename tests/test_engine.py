@@ -183,3 +183,56 @@ def test_from_paths_constructor():
     with Validator.from_paths({"mini": MINI_RULES}) as v:
         assert [r.name for r in v.rulesets] == ["mini"]
         assert v.validate(FIXTURES / "good-invoice.xml").is_valid
+
+
+# --------------------------------------------------------------------------
+# In-memory validation — how real applications actually pass invoices
+# --------------------------------------------------------------------------
+
+
+def test_validate_bytes_matches_validate_file(validator):
+    """In-memory and on-disk paths must agree, or callers cannot trust either."""
+    path = FIXTURES / "no-id-invoice.xml"
+
+    from_file = validator.validate(path)
+    from_bytes = validator.validate_bytes(path.read_bytes(), name=path.name)
+
+    assert from_file.is_valid == from_bytes.is_valid
+    assert [f.rule_id for f in from_file.fatals] == [f.rule_id for f in from_bytes.fatals]
+    assert from_file.fired_rules == from_bytes.fired_rules
+
+
+def test_validate_bytes_accepts_str(validator):
+    xml = (FIXTURES / "good-invoice.xml").read_text(encoding="utf-8")
+    assert validator.validate_bytes(xml, name="inline.xml").is_valid
+
+
+def test_validate_bytes_uses_the_supplied_name(validator):
+    report = validator.validate_bytes(
+        (FIXTURES / "good-invoice.xml").read_bytes(), name="INV-2026-0042"
+    )
+    assert report.source == "INV-2026-0042"
+
+
+def test_validate_bytes_refuses_xxe(validator):
+    """The security boundary must hold on the in-memory path too."""
+    with pytest.raises(UnsafeDocumentError, match="DTD or entity"):
+        validator.validate_bytes((FIXTURES / "xxe-invoice.xml").read_bytes(), name="evil")
+
+
+def test_validate_bytes_rejects_non_xml(validator):
+    with pytest.raises(ValidationError):
+        validator.validate_bytes(b"this is not xml at all", name="junk")
+
+
+def test_validate_bytes_rejects_bad_encoding(validator):
+    with pytest.raises(ValidationError, match="UTF-8"):
+        validator.validate_bytes(b"\xff\xfe<Invoice/>", name="bad-encoding")
+
+
+def test_ruleset_run_requires_exactly_one_source(validator):
+    validator.warm_up()
+    ruleset = validator.rulesets[0]
+
+    with pytest.raises(ValidationError, match="exactly one"):
+        ruleset.run(processor=validator._proc)

@@ -4,8 +4,9 @@
 
 Validate Peppol / PINT e-invoices in Python — and explain why they failed.
 
-> **Status:** early development. The SVRL layer works; the validation engine and
-> explanation layer are being built. Not yet published to PyPI.
+> **Status:** v0.1.0 — working end to end. Validates real invoices against the official
+> UAE conformance corpus, explains 18 rules in plain language, ships a CLI. Not yet on
+> PyPI. Expect the API to move before 1.0.
 
 ---
 
@@ -67,18 +68,83 @@ uv sync
 
 ## Usage
 
-Today, the SVRL layer:
+### Command line
+
+```bash
+sahih validate invoice.xml
+sahih validate invoices/*.xml --json
+sahih rules
+```
+
+Exit codes: `0` valid, `1` invalid, `2` could not validate. The 1-vs-2 split matters in
+CI — a non-compliant invoice is a finding you may gate on; a wrong rule-set path is a
+broken build.
+
+### From your application
 
 ```python
-from sahih import parse_svrl
+from sahih import RuleSet, Validator, Explainer
 
-report = parse_svrl(svrl_output, ruleset="PINT-AE 2026.5", source="invoice.xml")
+# Compile once at startup — compiling costs ~300ms, validating costs ~5ms.
+validator = Validator([
+    RuleSet("PINT base",      "rulesets/pint-ae/2026.5/PINT-UBL-validation-preprocessed.xslt"),
+    RuleSet("PINT-AE 2026.5", "rulesets/pint-ae/2026.5/PINT-jurisdiction-aligned-rules.xslt"),
+])
+validator.warm_up()
+explainer = Explainer()
 
-print(report)  # invoice.xml — INVALID against PINT-AE 2026.5 ...
-print(report.is_valid)  # False
-for finding in report.fatals:
-    print(finding.rule_id, finding.location)
+# Then per request — invoice XML straight from the request body, no temp file.
+report = validator.validate_bytes(request_body, name="INV-2026-0042")
+
+if not report.is_valid:
+    for e in explainer.explain_report(report, blocking_only=True):
+        print(e.rule_id, e.summary, e.fix)
 ```
+
+`validate_bytes()` takes bytes or str; `validate()` takes a path. `Validator` is **not
+thread-safe** — build one per worker, or serialise access.
+
+## What sahih takes as input, and what it deliberately doesn't
+
+**sahih validates UBL XML.** That is the whole input contract. Worth being explicit
+about, because real systems hold invoices in other shapes.
+
+| You have | What to do |
+| --- | --- |
+| UBL XML (file, bytes, HTTP body, DB column) | `validate()` / `validate_bytes()` — this is sahih |
+| JSON from your own system or an ERP | **Map it to UBL first.** Separate concern — see below |
+| A hybrid PDF (PDF/A-3 with embedded XML) | Extract the embedded XML, then validate that |
+| A plain PDF or a scan | Extraction is guesswork. See the warning below |
+
+### Why mapping is not in scope
+
+Turning your JSON into UBL is a **mapping** problem: your field names, your tax logic,
+your business rules. It is specific to each system, it changes when your schema changes,
+and getting it wrong is a data problem.
+
+Validation is a different kind of thing: deterministic, defined by a published spec,
+identical for everyone. Mixing the two would let a mapping bug silently produce a wrong
+compliance verdict — the failure would read as "your invoice is non-compliant" when the
+truth is "we built the XML wrong". Those need different people looking at them.
+
+So build the UBL yourself, then hand it to sahih. The two stay separately debuggable.
+
+### ⚠️ On PDFs
+
+Two completely different cases, and conflating them is dangerous:
+
+**Hybrid PDF** — PDF/A-3 carrying an embedded XML invoice (the Factur-X / ZUGFeRD
+pattern). The real invoice data is *in* the file. Extract it, validate that.
+Deterministic and safe.
+
+**Plain PDF or a scan** — there is no invoice data in there, only a picture of one.
+Anything recovered is inference, whether from layout heuristics, OCR, or a model. That
+is useful for drafting and it must **never** produce a compliance verdict. "Valid" on
+reconstructed data means "the XML we guessed at is well-formed" — which is not what the
+person reading it will think it means.
+
+If you build PDF intake, keep extraction visible as its own step and let a human confirm
+the figures before the result is treated as an invoice.
 
 ## Development
 
@@ -93,10 +159,12 @@ uv run mypy src      # type check
 ## Roadmap
 
 - [x] SVRL parsing into structured findings
-- [ ] Validation engine (Saxon/XSLT execution)
-- [ ] Layered rule set management and versioning
-- [ ] Explanation layer — actionable diagnosis, not rule text
-- [ ] CLI
+- [x] Validation engine (Saxon/XSLT execution)
+- [x] Layered rule sets with profiles that never mix
+- [x] Explanation layer — actionable diagnosis, not rule text
+- [x] CLI
+- [x] In-memory validation for application use
+- [ ] Wider curation coverage (18 of 420 rules today)
 - [ ] MCP server
 - [ ] Publish to PyPI
 

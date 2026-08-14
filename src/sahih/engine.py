@@ -110,9 +110,20 @@ class RuleSet:
         if self._executable is None:
             raise RuleSetError(f"Rule set '{self.name}' compiled to nothing ({self.path}).")
 
-    def run(self, source_file: Path, *, processor: PySaxonProcessor) -> ValidationReport:
+    def run(
+        self,
+        *,
+        processor: PySaxonProcessor,
+        source_file: Path | None = None,
+        xdm_node: object | None = None,
+        source_name: str = "",
+    ) -> ValidationReport:
         """
         Validate one document against this rule set.
+
+        Exactly one of ``source_file`` or ``xdm_node`` must be supplied. The node form
+        exists so callers holding invoice XML in memory — from an HTTP request, a
+        queue, or a database column — never have to round-trip through a temp file.
 
         Returns:
             A `ValidationReport` tagged with this rule set's name.
@@ -120,23 +131,31 @@ class RuleSet:
         Raises:
             ValidationError: if the transformation itself fails.
         """
+        if (source_file is None) == (xdm_node is None):
+            raise ValidationError("Supply exactly one of source_file or xdm_node.")
+
         self.compile(processor)
         assert self._executable is not None  # compile() guarantees this or raises
 
+        label = source_name or (source_file.name if source_file else "document")
+
         try:
-            svrl = self._executable.transform_to_string(source_file=str(source_file))
+            if source_file is not None:
+                svrl = self._executable.transform_to_string(source_file=str(source_file))
+            else:
+                svrl = self._executable.transform_to_string(xdm_node=xdm_node)
         except Exception as exc:
             raise ValidationError(
-                f"Rule set '{self.name}' could not process {source_file.name}: {exc}"
+                f"Rule set '{self.name}' could not process {label}: {exc}"
             ) from exc
 
         if svrl is None:
             raise ValidationError(
-                f"Rule set '{self.name}' produced no output for {source_file.name}. "
+                f"Rule set '{self.name}' produced no output for {label}. "
                 "The stylesheet may not be a Schematron-derived validator."
             )
 
-        return parse_svrl(svrl, ruleset=self.name, source=source_file.name)
+        return parse_svrl(svrl, ruleset=self.name, source=label)
 
     @property
     def is_compiled(self) -> bool:
@@ -223,8 +242,46 @@ class Validator:
 
         _assert_safe(raw, source=path.name)
 
-        layers = [ruleset.run(path, processor=self._proc) for ruleset in self.rulesets]
+        layers = [ruleset.run(processor=self._proc, source_file=path) for ruleset in self.rulesets]
         return StackedReport(layers=tuple(layers), source=path.name)
+
+    def validate_bytes(self, data: bytes | str, *, name: str = "document") -> StackedReport:
+        """
+        Validate invoice XML held in memory.
+
+        This is the entry point for real applications. Invoices arrive from HTTP
+        request bodies, message queues, database columns, and object storage — writing
+        each one to a temp file just to validate it is wasteful and adds a failure mode
+        (disk full, permissions, cleanup) to a pure computation.
+
+        Args:
+            data: The invoice XML, as bytes or str.
+            name: A label for the report, e.g. the original filename or a document ID.
+                  Purely cosmetic — it appears in output and nothing branches on it.
+
+        Raises:
+            UnsafeDocumentError: the document carries a DTD or entity declarations.
+            ValidationError: the XML could not be parsed.
+
+        Note: this takes XML, not JSON and not PDF. Converting those into UBL is a
+        separate concern with a separate failure model — see the README on where that
+        boundary sits and why it is deliberate.
+        """
+        raw = data.encode("utf-8") if isinstance(data, str) else data
+        _assert_safe(raw, source=name)
+
+        try:
+            node = self._proc.parse_xml(xml_text=raw.decode("utf-8"))
+        except UnicodeDecodeError as exc:
+            raise ValidationError(f"{name} is not valid UTF-8: {exc}") from exc
+        except Exception as exc:
+            raise ValidationError(f"Could not parse {name} as XML: {exc}") from exc
+
+        layers = [
+            ruleset.run(processor=self._proc, xdm_node=node, source_name=name)
+            for ruleset in self.rulesets
+        ]
+        return StackedReport(layers=tuple(layers), source=name)
 
     def detach_thread(self) -> None:
         """Release Saxon's thread-local state. Call as a worker thread finishes."""
