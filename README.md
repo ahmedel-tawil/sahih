@@ -106,6 +106,35 @@ if not report.is_valid:
 `validate_bytes()` takes bytes or str; `validate()` takes a path. `Validator` is **not
 thread-safe** — build one per worker, or serialise access.
 
+### VAT-inclusive pricing
+
+Tourism and retail routinely quote "AED 350 all in". A UBL invoice always carries
+tax-**exclusive** prices, so that has to be back-computed:
+
+```python
+Line(..., unit_price=Decimal("350.00"), vat_rate=Decimal("5"), price_includes_tax=True)
+```
+
+The conversion starts from the **line total**, not the unit price, and that ordering
+is the whole point:
+
+```
+line gross = 3 x 350.00 = 1050.00
+line net   = 1050.00 / 1.05 = 1000.00
+unit net   = 1000.00 / 3 = 333.333333
+```
+
+Converting the unit price first gives `333.33 x 3 = 999.99`, so a customer quoted
+1050.00 is billed 1049.99. One fils, every line, forever.
+
+Note `ibt-148` "Item **gross** price" means *before line discount*, **not** *including
+tax* — a different sense of the word that is easy to misread. There is no
+tax-inclusive price field in UBL at all.
+
+`TaxIncludedIndicator` stays `false`, as it is in all seven official UAE samples.
+Setting it `true` short-circuits `ibr-co-13` and `ibr-co-15` — it switches the totals
+arithmetic checks off rather than changing how prices are expressed.
+
 ### Validating beats building
 
 `validate()` / `validate_bytes()` judge a document **exactly as given**. That is the
@@ -195,7 +224,6 @@ uv run mypy src      # type check
 - [ ] Curation targeting: 136 of 304 pint-ae rules are worth explaining; 5 done.
       The other 168 are self-evident and deliberately left to their own text.
 - [ ] Port or drop 11 curated EN 16931 rules that never fire under `pint-ae`
-- [ ] VAT-inclusive pricing (`TaxIncludedIndicator` is hardcoded false)
 - [ ] Arabic explanations (Arabic invoice *content* already works)
 - [ ] PDF intake (hybrid PDF/A-3 only; scans stay out of the verdict)
 - [ ] MCP server

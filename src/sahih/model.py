@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 
 from .exceptions import SahihError
@@ -165,6 +165,9 @@ class Line:
     classification_code: str = "996411"
     unit_code: str = "H87"
     service_accounting_code: str | None = None
+    #: True when `unit_price` already includes VAT — "AED 350 all in", which is how
+    #: tourism and retail routinely quote. See `net` for what that changes.
+    price_includes_tax: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "quantity", _money(self.quantity, "Line.quantity"))
@@ -184,14 +187,72 @@ class Line:
         # prose. See "let the rules speak" in the module docstring.
 
     @property
+    def gross(self) -> Decimal:
+        """Line amount including VAT — what the customer actually pays."""
+        if self.price_includes_tax:
+            return self.quantity * self.unit_price
+        return self.net + self.vat
+
+    @property
     def net(self) -> Decimal:
-        """Line amount excluding VAT."""
-        return self.quantity * self.unit_price
+        """
+        Line amount excluding VAT.
+
+        VAT-INCLUSIVE PRICING
+        ---------------------
+        A UBL invoice always carries tax-EXCLUSIVE prices — `ibt-146` is the item net
+        price and there is no field for a tax-inclusive one. ("Gross price", `ibt-148`,
+        means *before line discount*, not *including tax* — a different sense of the
+        word that is easy to misread.) So a business quoting "AED 350 all in" has to
+        have that back-computed.
+
+        The computation deliberately starts from the LINE total, not the unit price:
+
+            line gross  = quantity x unit_price       3 x 350.00 = 1050.00
+            line net    = line gross / (1 + rate)     1050.00 / 1.05 = 1000.00
+            unit net    = line net / quantity         333.333333...
+
+        Doing it the other way — converting the unit price first and then multiplying
+        — gives 333.33 x 3 = 999.99, so the customer is billed 1049.99 having been
+        quoted 1050.00. One fils, every line, forever. Starting from the line total
+        makes the total the customer was promised come out exact.
+        """
+        if not self.price_includes_tax:
+            return self.quantity * self.unit_price
+        gross = self.quantity * self.unit_price
+        return (gross / (1 + self.vat_rate / Decimal(100))).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
 
     @property
     def vat(self) -> Decimal:
-        """VAT on this line."""
+        """
+        VAT on this line.
+
+        For inclusive pricing this is derived by subtraction rather than recomputed
+        from the net, so that net + vat lands exactly on the quoted gross. Computing
+        it as net x rate can leave a rounding remainder that puts the invoice a fils
+        away from what the customer agreed to pay.
+        """
+        if self.price_includes_tax:
+            return self.gross - self.net
         return self.net * self.vat_rate / Decimal(100)
+
+    @property
+    def unit_net_price(self) -> Decimal:
+        """
+        The tax-exclusive unit price to emit as `ibt-146`.
+
+        Carried at higher precision than the amounts on purpose. The 2-decimal limit
+        (ibr-091, ibr-123, ibr-124, ibr-125) applies to document TOTALS, not to prices,
+        and rounding the price to 2 places is exactly what reintroduces the one-fils
+        drift this property exists to avoid.
+        """
+        if not self.price_includes_tax:
+            return self.unit_price
+        if not self.quantity:
+            return Decimal(0)
+        return (self.net / self.quantity).quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
 
 
 @dataclass(frozen=True, slots=True)

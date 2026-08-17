@@ -434,3 +434,73 @@ def test_empty_declaration_behaves_as_none():
 def test_allowance_total_can_be_declared_without_allowances():
     xml = build(invoice(declared=DeclaredTotals(allowance_total=Decimal("50.00"))))
     assert amount(xml, "AllowanceTotalAmount") == Decimal("50.00")
+
+
+# ==========================================================================
+# VAT-inclusive pricing — "AED 350 all in"
+# ==========================================================================
+
+
+def incl(qty, price, rate="5", **over):
+    return line(qty, price, vat_rate=Decimal(rate), price_includes_tax=True, **over)
+
+
+def test_inclusive_price_lands_exactly_on_the_quoted_total():
+    """
+    A customer quoted 3 x AED 350 all in expects to pay 1050.00. Anything else is a
+    conversation, however small.
+    """
+    ln = incl("3", "350.00")
+    assert ln.gross == Decimal("1050.00")
+    assert ln.net == Decimal("1000.00")
+    assert ln.vat == Decimal("50.00")
+    assert ln.net + ln.vat == ln.gross
+
+    xml = build(invoice(lines=(ln,)))
+    assert amount(xml, "PayableAmount") == Decimal("1050.00")
+
+
+def test_computing_from_the_unit_price_would_lose_a_fils():
+    """
+    Why `net` starts from the LINE total rather than converting the unit price first.
+    333.33 x 3 is 999.99, so the customer is billed 1049.99 having been quoted 1050.00.
+    """
+    naive_unit = (Decimal("350.00") / Decimal("1.05")).quantize(Decimal("0.01"))
+    assert naive_unit * 3 == Decimal("999.99")  # the wrong way
+    assert incl("3", "350.00").net == Decimal("1000.00")  # the way we do it
+
+
+def test_awkward_inclusive_price_still_reconciles():
+    ln = incl("3", "349.99")
+    assert ln.gross == Decimal("1049.97")
+    assert ln.net + ln.vat == ln.gross
+
+
+def test_zero_rated_inclusive_price_is_unchanged():
+    ln = incl("2", "500.00", rate="0", vat_category=VatCategory.ZERO_RATED)
+    assert ln.net == Decimal("1000.00")
+    assert ln.vat == Decimal("0.00")
+
+
+def test_unit_net_price_is_emitted_at_higher_precision():
+    """
+    Prices are not subject to the 2-decimal limit (that is ibr-091/123/124/125 on the
+    document totals). Rounding the price to 2 places reintroduces the drift.
+    """
+    ln = incl("3", "350.00")
+    assert ln.unit_net_price == Decimal("333.333333")
+    assert b"333.333333" in build(invoice(lines=(ln,)))
+
+
+def test_exclusive_pricing_is_unaffected():
+    ln = line("3", "349.99")
+    assert ln.price_includes_tax is False
+    assert ln.net == Decimal("1049.97")
+    assert ln.gross == ln.net + ln.vat
+
+
+def test_inclusive_and_exclusive_lines_can_be_mixed():
+    xml = build(invoice(lines=(line("1", "100.00"), incl("1", "105.00"))))
+    # 100.00 exclusive + 100.00 back-computed = 200.00 net
+    assert amount(xml, "LineExtensionAmount") == Decimal("200.00")
+    assert amount(xml, "PayableAmount") == Decimal("210.00")

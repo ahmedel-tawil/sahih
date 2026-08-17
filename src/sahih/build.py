@@ -276,17 +276,19 @@ def _line(parent: ET.Element, index: int, line: Line, currency: str) -> None:
     _el(_el(category, CAC, "TaxScheme"), CBC, "ID", "VAT")
 
     price = _el(node, CAC, "Price")
-    _el(price, CBC, "PriceAmount", q(line.unit_price), currencyID=currency)
+    # ibt-146 is the tax-EXCLUSIVE unit price. When the caller quoted VAT-inclusive,
+    # this is the back-computed figure, carried at higher precision than the amounts.
+    _el(price, CBC, "PriceAmount", line.unit_net_price, currencyID=currency)
     _el(price, CBC, "BaseQuantity", 1, unitCode=line.unit_code)
     # ibr-126-ae wants the item GROSS price too. With no separate gross concept in
     # most source systems, net and gross coincide and the allowance is zero.
     charge = _el(price, CAC, "AllowanceCharge")
     _el(charge, CBC, "ChargeIndicator", "false")
     _el(charge, CBC, "Amount", q(Decimal(0)), currencyID=currency)
-    _el(charge, CBC, "BaseAmount", q(line.unit_price), currencyID=currency)
+    _el(charge, CBC, "BaseAmount", line.unit_net_price, currencyID=currency)
 
     extension = _el(node, CAC, "ItemPriceExtension")
-    _el(extension, CBC, "Amount", q(line.net + line.vat), currencyID=currency)
+    _el(extension, CBC, "Amount", q(line.gross), currencyID=currency)
     _el(_el(extension, CAC, "TaxTotal"), CBC, "TaxAmount", q(line.vat), currencyID=currency)
 
 
