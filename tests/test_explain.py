@@ -192,3 +192,108 @@ def test_knowledge_base_can_be_injected():
 
     assert result.is_curated
     assert result.summary == "Custom summary here."
+
+
+# ==========================================================================
+# Languages
+# ==========================================================================
+
+
+def test_arabic_is_available():
+    from sahih import available_languages
+
+    langs = available_languages()
+    assert langs[0] == "en"  # base language first
+    assert "ar" in langs
+
+
+def test_requested_language_wins_when_translated():
+    result = Explainer(language="ar").explain(finding("ibr-101-ae"))
+
+    assert result.source is ExplanationSource.CURATED
+    assert result.language == "ar"
+    assert result.is_translated
+    assert "الجهة" in result.summary
+
+
+def test_untranslated_rule_falls_back_to_base_language():
+    """
+    Better English than nothing — but `source` and `language` say so, so a caller
+    rendering RTL can set dir="ltr" on that one string instead of mangling it.
+    """
+    result = Explainer(language="ar").explain(finding("BR-CO-15"))
+
+    assert result.source is ExplanationSource.CURATED_FALLBACK
+    assert result.language == "en"
+    assert result.is_curated  # still curated…
+    assert not result.is_translated  # …just not in Arabic
+    assert "add up" in result.summary
+
+
+def test_uncurated_rule_is_english_even_in_arabic_mode():
+    """
+    Rule text is OpenPeppol's and English only. Never claim otherwise — the language
+    field is what stops a UI applying RTL to a Latin string.
+    """
+    result = Explainer(language="ar").explain(finding("ibr-999", message="English rule text."))
+
+    assert result.source is ExplanationSource.OFFICIAL
+    assert result.language == "en"
+
+
+def test_unknown_language_degrades_to_base_without_raising():
+    """A missing translation file is not an error — coverage is expected to be uneven."""
+    ex = Explainer(language="fr")
+    assert ex.translated_count() == 0
+    assert ex.explain(finding("ibr-101-ae")).language == "en"
+
+
+def test_terms_are_shared_not_duplicated_per_language():
+    """
+    Business-term codes are language-independent identifiers. Repeating them per
+    language would only create drift.
+    """
+    en = Explainer().explain(finding("ibr-101-ae"))
+    ar = Explainer(language="ar").explain(finding("ibr-101-ae"))
+    assert ar.terms == en.terms == ("BTAE-11", "BTAE-16")
+
+
+def test_arabic_entries_are_complete_and_correspond_to_english():
+    """
+    Guards two kinds of drift: a half-written entry, and a key that exists in Arabic
+    but not in English (a typo that would silently never be used).
+    """
+    from sahih.explain import _load_curated
+
+    base = _load_curated()
+    arabic = _load_curated("ar")
+
+    assert arabic, "Arabic file should not be empty"
+    for rule_id, entry in arabic.items():
+        assert rule_id in base, f"{rule_id} exists in Arabic but not English"
+        for field in ("summary", "why", "fix"):
+            assert entry.get(field), f"{rule_id} has no {field}"
+            assert len(str(entry[field])) > 20, f"{rule_id} {field} is too thin"
+
+
+def test_only_live_rules_are_translated():
+    """
+    The 11 EN 16931 entries never fire under pint-ae. Translating them would be the
+    exact waste this project keeps trying to avoid.
+    """
+    from sahih.explain import _load_curated
+
+    dead = {
+        "BR-01",
+        "BR-02",
+        "BR-03",
+        "BR-06",
+        "BR-07",
+        "BR-11",
+        "BR-51",
+        "BR-63",
+        "BR-CL-17",
+        "BR-CO-15",
+        "BR-CO-16",
+    }
+    assert not (set(_load_curated("ar")) & dead)

@@ -135,6 +135,33 @@ tax-inclusive price field in UBL at all.
 Setting it `true` short-circuits `ibr-co-13` and `ibr-co-15` — it switches the totals
 arithmetic checks off rather than changing how prices are expressed.
 
+### Languages
+
+```python
+Explainer(language="ar")
+```
+
+Explanations exist in English and Arabic. Coverage is uneven in two dimensions at
+once — which rules are curated, and which of those are translated — so every result
+says which step of the fallback it took:
+
+| `source` | Meaning |
+| --- | --- |
+| `CURATED` | Curated in the language you asked for |
+| `CURATED_FALLBACK` | Curated, but only in English |
+| `OFFICIAL` | The rule's own message — **always English** |
+
+`Explanation.language` is the language the text is *actually* in. A UI rendering
+Arabic needs that to set `dir="ltr"` on the strings that fell back, rather than
+flipping Latin text and making it unreadable.
+
+**The rule sets themselves are English only.** OpenPeppol publishes no translated
+rule text, so an uncurated rule reads English whatever language you ask for. Say so
+in your UI rather than implying full coverage.
+
+Arabic *invoice content* — party names, addresses, line descriptions — has always
+worked; it is plain UTF-8 and needs nothing special.
+
 ### Validating beats building
 
 `validate()` / `validate_bytes()` judge a document **exactly as given**. That is the
@@ -224,7 +251,6 @@ uv run mypy src      # type check
 - [ ] Curation targeting: 136 of 304 pint-ae rules are worth explaining; 5 done.
       The other 168 are self-evident and deliberately left to their own text.
 - [ ] Port or drop 11 curated EN 16931 rules that never fire under `pint-ae`
-- [ ] Arabic explanations (Arabic invoice *content* already works)
 - [ ] PDF intake (hybrid PDF/A-3 only; scans stay out of the verdict)
 - [ ] MCP server
 - [ ] Publish to PyPI

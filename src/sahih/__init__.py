@@ -33,7 +33,7 @@ from .exceptions import (
     UnsafeDocumentError,
     ValidationError,
 )
-from .explain import Explainer, Explanation, ExplanationSource
+from .explain import Explainer, Explanation, ExplanationSource, available_languages
 from .model import (
     Address,
     Allowance,
@@ -82,6 +82,7 @@ __all__ = [
     "Validator",
     "VatCategory",
     "__version__",
+    "available_languages",
     "build",
     "by_id",
     "catalogue",
