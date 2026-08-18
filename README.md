@@ -248,8 +248,8 @@ uv run mypy src      # type check
 - [x] CLI
 - [x] In-memory validation for application use
 - [ ] Let the rules speak: stop pre-empting rules that fire on their own
-- [ ] Curation targeting: 136 of 304 pint-ae rules are worth explaining; 5 done.
-      The other 168 are self-evident and deliberately left to their own text.
+- [ ] Curation: 22 of 137 rules worth explaining are done (24 of 302 total).
+      The other 165 are self-evident and deliberately left to their own text.
 - [ ] Port or drop 11 curated EN 16931 rules that never fire under `pint-ae`
 - [ ] PDF intake (hybrid PDF/A-3 only; scans stay out of the verdict)
 - [ ] MCP server

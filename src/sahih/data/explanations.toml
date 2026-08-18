@@ -102,6 +102,130 @@ fix = "Add the passport issuing country code as a two-letter ISO 3166-1 code. Th
 terms = ["BTAE-19", "BTAE-16"]
 
 # ===========================================================================
+# VAT category consistency — batch 1
+# ===========================================================================
+#
+# A VAT category (S / Z / E / AE / O) is not a label you attach to a line; it is a
+# claim about tax treatment, and the rate, the breakdown and the line VAT amount all
+# have to agree with it. These rules catch the case where a category was changed but
+# the numbers around it were not.
+#
+# The failure is nearly always the same shape: someone changed one field. Which is
+# why every fix below says what to check FIRST, rather than only restating the rule.
+
+["aligned-ibrp-s-01"]
+summary = "You used the standard-rated category on a line, but there is no matching standard-rated section in the VAT breakdown."
+why = """
+The VAT breakdown is the summary a tax authority reads: one entry per category used anywhere on the invoice. If a line claims standard rating and no standard-rated entry exists in the breakdown, the invoice contradicts itself and the tax cannot be reconciled."""
+fix = "Add a standard-rated entry to the VAT breakdown, or correct the line's category if standard rating was not intended. If you build the breakdown automatically, the likely cause is that it was computed before the line's category was changed."
+terms = ["IBT-151", "IBT-118", "IBG-23"]
+
+["aligned-ibrp-z-01"]
+summary = "You used the zero-rated category on a line, but there is no matching zero-rated section in the VAT breakdown."
+why = """
+Zero-rated is a taxable supply charged at 0%, so it still needs its own entry in the breakdown showing a taxable amount and zero tax. Omitting it is not the same as declaring zero — it leaves the treatment unstated."""
+fix = "Add a zero-rated entry to the VAT breakdown. If nothing on this invoice is genuinely zero-rated, the line's category is the thing to fix — and check it is not meant to be exempt, which is a different treatment."
+terms = ["IBT-151", "IBT-118", "IBG-23"]
+
+["aligned-ibrp-e-01"]
+summary = "You used the exempt category on a line, but there is no matching exempt section in the VAT breakdown."
+why = """
+Exempt supplies must be declared as exempt rather than simply omitted, because the distinction changes what input VAT the seller can recover. A missing breakdown entry leaves that unanswered."""
+fix = "Add an exempt entry to the VAT breakdown. Worth confirming the supply really is exempt rather than zero-rated — they look identical on an invoice at 0% and have opposite consequences for input VAT recovery."
+terms = ["IBT-151", "IBT-118", "IBG-23"]
+
+["aligned-ibrp-o-01"]
+summary = "You marked a line as outside the scope of VAT, but there is no matching section in the VAT breakdown."
+why = """
+"Outside scope" says the supply is not a UAE VAT transaction at all. That is a strong claim and it has to appear in the breakdown so the receiver and the tax authority can see it was made deliberately."""
+fix = "Add an outside-scope entry to the VAT breakdown, or correct the category. This code is often applied by mistake to supplies that are actually exempt or zero-rated."
+terms = ["IBT-151", "IBT-118", "IBG-23"]
+
+["aligned-ibrp-ae-01-ae"]
+summary = "You marked a line as reverse charge, but there is no matching reverse-charge section in the VAT breakdown."
+why = """
+Under reverse charge the buyer accounts for the VAT rather than the seller. The buyer cannot do that unless the invoice states it in the breakdown — so the entry is what makes the mechanism work, not paperwork."""
+fix = "Add a reverse-charge entry to the VAT breakdown. Check the buyer's details too: reverse charge usually requires the buyer's tax registration to be present and valid."
+terms = ["IBT-151", "IBT-118", "IBG-23"]
+
+["aligned-ibrp-s-05"]
+summary = "A standard-rated line has a VAT rate of zero."
+why = """
+Standard rating means tax is actually charged, so the rate has to be above zero (5% in the UAE). A standard-rated line at 0% is contradictory: either the category is wrong or the rate was never filled in."""
+fix = "Set the line's VAT rate to 5, or change the category. If the supply genuinely carries no VAT, pick the category that says why — zero-rated, exempt, or outside scope are three different answers."
+terms = ["IBT-151", "IBT-152"]
+
+["aligned-ibrp-z-05"]
+summary = "A zero-rated line has a VAT rate other than zero."
+why = """
+Zero-rated means taxable at 0%. Any other rate contradicts the category, and the most common cause is a category changed to zero-rated while the rate was left at 5."""
+fix = "Set the line's VAT rate to 0. If tax really is due on this line, the category should be standard rated instead."
+terms = ["IBT-151", "IBT-152"]
+
+["aligned-ibrp-s-06"]
+summary = "A standard-rated document-level discount has a VAT rate of zero."
+why = """
+A discount carries the VAT treatment of what it discounts. If it reduces standard-rated supplies then it is itself standard-rated, and must show a rate above zero — otherwise the tax relieved by the discount is overstated."""
+fix = "Set the discount's VAT rate to 5, or change its category to match the supplies it applies to."
+terms = ["IBT-95", "IBT-96"]
+
+["aligned-ibrp-z-06"]
+summary = "A zero-rated document-level discount has a VAT rate other than zero."
+why = "A discount against zero-rated supplies relieves no tax, so its rate must be zero. Any other value would reduce VAT that was never charged."
+fix = "Set the discount's VAT rate to 0, or correct its category if it applies to standard-rated supplies."
+terms = ["IBT-95", "IBT-96"]
+
+["aligned-ibrp-e-06"]
+summary = "An exempt document-level discount has a VAT rate other than zero."
+why = "Exempt supplies carry no VAT, so a discount against them cannot carry a rate. A non-zero value here would relieve tax that was never charged."
+fix = "Set the discount's VAT rate to 0, or correct its category."
+terms = ["IBT-95", "IBT-96"]
+
+["aligned-ibrp-ae-06"]
+summary = "A reverse-charge document-level discount has a VAT rate other than zero."
+why = "Under reverse charge the seller charges no VAT, so there is none for a discount to relieve. The rate must be zero."
+fix = "Set the discount's VAT rate to 0, or correct its category if this discount does not apply to reverse-charge supplies."
+terms = ["IBT-95", "IBT-96"]
+
+["aligned-ibrp-s-09"]
+summary = "The VAT amount in the standard-rated breakdown does not equal the taxable amount times the rate."
+why = """
+This is the arithmetic the tax authority checks first. A mismatch usually means the VAT was computed on a different base than the one declared — most often before a discount was applied, or on the gross rather than the net."""
+fix = "Recompute as taxable amount x rate / 100 and compare. If a document-level discount exists, confirm the taxable amount is the figure AFTER it has been deducted."
+terms = ["IBT-116", "IBT-117", "IBT-119"]
+
+["aligned-ibrp-z-09"]
+summary = "The zero-rated section of the VAT breakdown shows a VAT amount that is not zero."
+why = "Zero-rated means no tax is charged, so the breakdown must show exactly zero. A non-zero figure usually means the amount was computed with a 5% rate before the category was changed."
+fix = "Set the zero-rated VAT amount to 0. Then check the line rates feeding it — if any is still 5, that is where the figure came from."
+terms = ["IBT-117", "IBT-118"]
+
+["ibr-120-ae"]
+summary = "The zero-rated section of the VAT breakdown shows a rate other than zero."
+why = "The breakdown rate has to match the category it describes. Zero-rated is 0% by definition, so any other value makes the breakdown internally inconsistent."
+fix = "Set the rate in the zero-rated breakdown entry to 0."
+terms = ["IBT-118", "IBT-119"]
+
+["ibr-121-ae"]
+summary = "The exempt section of the VAT breakdown has a rate on it, and it should not."
+why = """
+Exempt is not a rate of zero — it is the absence of a rate, because the supply is outside the charge entirely. Stating 0% would imply a taxable supply charged at nothing, which is zero-rating and a different treatment with different recovery consequences."""
+fix = "Remove the rate from the exempt breakdown entry. Do not set it to 0 — leave it absent. If the supply is genuinely taxable at 0%, the category should be zero-rated instead."
+terms = ["IBT-118", "IBT-119"]
+
+["ibr-163-ae"]
+summary = "An exempt line carries a VAT amount, and it should not have one at all."
+why = "Exempt supplies fall outside the charge to VAT, so there is no tax amount to state. Reporting one — even zero — asserts a taxable supply."
+fix = "Remove the VAT amount from the exempt line. Do not set it to 0.00 — leave the field out."
+terms = ["IBT-151", "BTAE-08"]
+
+["ibr-165-ae"]
+summary = "A zero-rated line has a VAT amount that is not zero."
+why = "Zero-rated supplies are taxable at 0%, so the line's VAT amount must be present and exactly zero — unlike exempt lines, where it is absent entirely."
+fix = "Set the line's VAT amount to 0. If the rate on the line is still 5, that is almost certainly where the figure came from."
+terms = ["IBT-151", "BTAE-08"]
+
+# ===========================================================================
 # ⚠️  DEAD ENTRIES — EN 16931 ONLY. THESE NEVER FIRE UNDER THE pint-ae PROFILE.
 # ===========================================================================
 #
