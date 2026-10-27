@@ -37,6 +37,8 @@ from .explain import Explainer, Explanation, ExplanationSource, available_langua
 from .model import (
     Address,
     Allowance,
+    CreditNote,
+    CreditReason,
     DeclaredTotals,
     IncompleteInvoiceError,
     Invoice,
@@ -45,18 +47,21 @@ from .model import (
     Line,
     ModelError,
     Party,
+    TransactionFlags,
     VatCategory,
 )
 from .models import Finding, Severity, StackedReport, ValidationReport
 from .rules import CatalogueStats, Rule, by_id, catalogue, stats
 from .svrl import SVRLParseError, parse_svrl
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "Address",
     "Allowance",
     "CatalogueStats",
+    "CreditNote",
+    "CreditReason",
     "DeclaredTotals",
     "Explainer",
     "Explanation",
@@ -76,6 +81,7 @@ __all__ = [
     "SahihError",
     "Severity",
     "StackedReport",
+    "TransactionFlags",
     "UnsafeDocumentError",
     "ValidationError",
     "ValidationReport",

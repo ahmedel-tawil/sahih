@@ -54,6 +54,7 @@ from xml.etree import ElementTree as ET
 
 from .model import (
     Allowance,
+    CreditNote,
     DeclaredTotals,
     IncompleteInvoiceError,
     Invoice,
@@ -64,6 +65,7 @@ from .model import (
 )
 
 UBL = "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
+UBL_CN = "urn:oasis:names:specification:ubl:schema:xsd:CreditNote-2"
 CAC = "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"
 CBC = "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2"
 
@@ -72,9 +74,12 @@ PROFILE_CONSTANTS = {
     "pint-ae": {
         "CustomizationID": "urn:peppol:pint:billing-1@ae-1",
         "ProfileID": "urn:peppol:bis:billing",
-        "ProfileExecutionID": "00000000",
     }
 }
+
+#: A credit note's type code. PINT-AE also knows 81 ("credit note related to goods or
+#: services", for out-of-scope corrections) — not modelled until someone needs it.
+CREDIT_NOTE_TYPE_CODE = "381"
 
 TWO_PLACES = Decimal("0.01")
 
@@ -163,7 +168,8 @@ def _check_emitted(root: ET.Element, invoice: Invoice) -> None:
     `lines[0]` and silently dropped AED 519, producing an invoice that validated
     perfectly. Counting is cheap; silent data loss is not.
     """
-    emitted_lines = len(root.findall(f"{{{CAC}}}InvoiceLine"))
+    line_tag = "CreditNoteLine" if invoice.credit_note else "InvoiceLine"
+    emitted_lines = len(root.findall(f"{{{CAC}}}{line_tag}"))
     if emitted_lines != len(invoice.lines):
         raise IncompleteInvoiceError(
             f"Built {emitted_lines} invoice line(s) from {len(invoice.lines)} supplied. "
@@ -226,6 +232,8 @@ def _party(parent: ET.Element, party: Party, tag: str, currency: str) -> None:
     node = _el(wrapper, CAC, "Party")
 
     _el(node, CBC, "EndpointID", party.electronic_id, schemeID=party.electronic_id_scheme)
+    if party.identifier:
+        _el(_el(node, CAC, "PartyIdentification"), CBC, "ID", party.identifier)
 
     address = _el(node, CAC, "PostalAddress")
     _el(address, CBC, "StreetName", party.address.street)
@@ -256,23 +264,42 @@ def _party(parent: ET.Element, party: Party, tag: str, currency: str) -> None:
         _el(legal, CBC, "CompanyID", party.legal_id, **attrs)
 
 
-def _line(parent: ET.Element, index: int, line: Line, currency: str) -> None:
-    node = _el(parent, CAC, "InvoiceLine")
+def _percent(parent: ET.Element, category: VatCategory, rate: Decimal) -> None:
+    """
+    A rate, except where the category has none.
+
+    "Not subject to VAT" carries no rate at all — on a line (``aligned-ibrp-o-05``) or in
+    its breakdown (``aligned-ibrp-o-11-ae``). Emitting ``0`` there is not a harmless
+    zero: it fails both rules.
+    """
+    if category is not VatCategory.OUTSIDE_SCOPE:
+        _el(parent, CBC, "Percent", rate)
+
+
+def _line(parent: ET.Element, index: int, line: Line, currency: str, *, credit: bool) -> None:
+    node = _el(parent, CAC, "CreditNoteLine" if credit else "InvoiceLine")
     _el(node, CBC, "ID", index)  # derived: sequence, never supplied
-    _el(node, CBC, "InvoicedQuantity", line.quantity, unitCode=line.unit_code)
+    _el(node, CBC, "CreditedQuantity" if credit else "InvoicedQuantity", line.quantity,
+        unitCode=line.unit_code)
     _el(node, CBC, "LineExtensionAmount", q(line.net), currencyID=currency)
 
     item = _el(node, CAC, "Item")
     _el(item, CBC, "Description", line.description)
     _el(item, CBC, "Name", line.name)
+    if line.service_accounting_code:
+        # BTAE-17 — what ibr-185-ae looks for on a SERVICES item, scheme SAC (ibr-189-ae).
+        # UBL places AdditionalItemIdentification after Name, before CommodityClassification.
+        additional = _el(item, CAC, "AdditionalItemIdentification")
+        _el(additional, CBC, "ID", line.service_accounting_code, schemeID="SAC")
 
     classification = _el(item, CAC, "CommodityClassification")
     _el(classification, CBC, "CommodityCode", line.item_type.value)
-    _el(classification, CBC, "ItemClassificationCode", line.classification_code, listID="HS")
+    if line.classification_code:
+        _el(classification, CBC, "ItemClassificationCode", line.classification_code, listID="HS")
 
     category = _el(item, CAC, "ClassifiedTaxCategory")
     _el(category, CBC, "ID", line.vat_category.value)
-    _el(category, CBC, "Percent", line.vat_rate)
+    _percent(category, line.vat_category, line.vat_rate)
     _el(_el(category, CAC, "TaxScheme"), CBC, "ID", "VAT")
 
     price = _el(node, CAC, "Price")
@@ -299,7 +326,7 @@ def _allowance(parent: ET.Element, allowance: Allowance, currency: str) -> None:
     _el(node, CBC, "Amount", q(allowance.amount), currencyID=currency)
     category = _el(node, CAC, "TaxCategory")
     _el(category, CBC, "ID", allowance.vat_category.value)
-    _el(category, CBC, "Percent", allowance.vat_rate)
+    _percent(category, allowance.vat_category, allowance.vat_rate)
     _el(_el(category, CAC, "TaxScheme"), CBC, "ID", "VAT")
 
 
@@ -338,14 +365,35 @@ def build(
     _require_party(invoice.seller, "seller", needs_tax_id=seller_tax_id_required)
     _require_party(invoice.buyer, "buyer", needs_tax_id=buyer_tax_id_required)
 
-    for prefix, ns in (("", UBL), ("cac", CAC), ("cbc", CBC)):
+    credit: CreditNote | None = invoice.credit_note
+    root_ns = UBL_CN if credit else UBL
+    for prefix, ns in (("", root_ns), ("cac", CAC), ("cbc", CBC)):
         ET.register_namespace(prefix, ns)
 
-    root = ET.Element(f"{{{UBL}}}Invoice")
+    root = ET.Element(f"{{{root_ns}}}{'CreditNote' if credit else 'Invoice'}")
     cur = invoice.currency
+    # A foreign-currency document also states its VAT and its total in AED, at the rate
+    # the caller fixed (BTAE-04). Left out when no rate was given, so ibr-159-ae /
+    # ibr-175-ae report it rather than us.
+    aed_rate = invoice.aed_rate if cur != "AED" else None
+
+    # Every total is computed up front: the AED total (BTAE-20) is stated near the top of
+    # the document, long before LegalMonetaryTotal.
+    d = invoice.declared or DeclaredTotals()
+    groups = _tax_groups(invoice)
+    # A declared breakdown VAT replaces the derived one — emitted verbatim, and every total
+    # below is built on it, so the document agrees with itself and with the caller's invoice.
+    declared_tax = {k: v for k, v in (d.tax_subtotals or {}).items() if k in groups}
+    for key, amount in declared_tax.items():
+        groups[key]["tax"] = amount
+    total_tax = sum((g["tax"] for g in groups.values()), Decimal(0))
+    line_total = sum((line.net for line in invoice.lines), Decimal(0))
+    allowance_total = sum((a.amount for a in invoice.allowances), Decimal(0))
+    net = line_total - allowance_total
 
     for tag, value in constants.items():
         _el(root, CBC, tag, value)
+    _el(root, CBC, "ProfileExecutionID", invoice.transaction_flags.code)  # BTAE-02
 
     # Omitted when absent, so ibr-002 / ibr-003 can report it rather than us.
     if invoice.number:
@@ -355,14 +403,39 @@ def build(
     _el(root, CBC, "UUID", str(uuid.uuid5(uuid.NAMESPACE_DNS, invoice.number or "unnumbered")))
     if invoice.issue_date:
         _el(root, CBC, "IssueDate", invoice.issue_date.isoformat())
-    if invoice.due_date:
-        _el(root, CBC, "DueDate", invoice.due_date.isoformat())
-    _el(root, CBC, "InvoiceTypeCode", invoice.invoice_type_code)
+    if credit:
+        # A UBL credit note has no document-level due date, and PINT-AE wants none
+        # (ibr-127-ae exempts credit notes).
+        _el(root, CBC, "CreditNoteTypeCode", CREDIT_NOTE_TYPE_CODE)
+    else:
+        if invoice.due_date:
+            _el(root, CBC, "DueDate", invoice.due_date.isoformat())
+        _el(root, CBC, "InvoiceTypeCode", invoice.invoice_type_code)
     if invoice.note:
         _el(root, CBC, "Note", invoice.note)
     _el(root, CBC, "DocumentCurrencyCode", cur)
+    if aed_rate is not None:
+        _el(root, CBC, "TaxCurrencyCode", "AED")  # IBT-006 — only ever AED (ibr-140-ae)
     if invoice.buyer_reference:
         _el(root, CBC, "BuyerReference", invoice.buyer_reference)
+
+    if credit:
+        # BTAE-03, then the invoice it corrects (IBG-03) — UBL order: DiscrepancyResponse
+        # before BillingReference.
+        _el(_el(root, CAC, "DiscrepancyResponse"), CBC, "ResponseCode", credit.reason.value)
+        if credit.invoice_number:
+            ref = _el(_el(root, CAC, "BillingReference"), CAC, "InvoiceDocumentReference")
+            _el(ref, CBC, "ID", credit.invoice_number)
+            if credit.invoice_date:
+                _el(ref, CBC, "IssueDate", credit.invoice_date.isoformat())
+
+    if aed_rate is not None:
+        # BTAE-20 — the total with VAT in AED, which PINT-AE carries as a document reference
+        # (exactly as the official Exports sample does).
+        aed = _el(root, CAC, "AdditionalDocumentReference")
+        _el(aed, CBC, "ID", "AED")
+        _el(aed, CBC, "DocumentTypeCode", "aedtotal-incl-vat")
+        _el(aed, CBC, "DocumentDescription", f"AED {q((net + total_tax) * aed_rate)}")
 
     _party(root, invoice.seller, "AccountingSupplierParty", cur)
     _party(root, invoice.buyer, "AccountingCustomerParty", cur)
@@ -373,8 +446,13 @@ def build(
     for allowance in invoice.allowances:
         _allowance(root, allowance, cur)
 
-    groups = _tax_groups(invoice)
-    total_tax = sum((g["tax"] for g in groups.values()), Decimal(0))
+    if aed_rate is not None:
+        rate = _el(root, CAC, "TaxExchangeRate")
+        _el(rate, CBC, "SourceCurrencyCode", cur)
+        _el(rate, CBC, "TargetCurrencyCode", "AED")
+        # At most six decimals (ibr-002-ae).
+        _el(rate, CBC, "CalculationRate",
+            aed_rate.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP).normalize())
 
     tax_total = _el(root, CAC, "TaxTotal")
     _el(
@@ -385,23 +463,24 @@ def build(
         currencyID=cur,
     )
     _el(tax_total, CBC, "TaxIncludedIndicator", "false")
-    for (category, rate), bucket in groups.items():
+    for (category, rate_pc), bucket in groups.items():
         subtotal = _el(tax_total, CAC, "TaxSubtotal")
         _el(subtotal, CBC, "TaxableAmount", q(bucket["taxable"]), currencyID=cur)
-        _el(subtotal, CBC, "TaxAmount", q(bucket["tax"]), currencyID=cur)
+        tax_text = str(bucket["tax"]) if (category, rate_pc) in declared_tax else q(bucket["tax"])
+        _el(subtotal, CBC, "TaxAmount", tax_text, currencyID=cur)
         cat = _el(subtotal, CAC, "TaxCategory")
         _el(cat, CBC, "ID", category.value)
-        _el(cat, CBC, "Percent", rate)
+        _percent(cat, category, rate_pc)
         _el(_el(cat, CAC, "TaxScheme"), CBC, "ID", "VAT")
+    if aed_rate is not None:
+        # IBT-111 — the VAT again, in AED: a second TaxTotal with no breakdown.
+        _el(_el(root, CAC, "TaxTotal"), CBC, "TaxAmount", q(total_tax * aed_rate),
+            currencyID="AED")
 
     # Totals are DERIVED by default, which makes an inconsistent document impossible
     # to construct. When `invoice.declared` supplies a figure, that figure is emitted
     # verbatim instead — so the arithmetic rules judge the caller's arithmetic rather
     # than ours. See DeclaredTotals for why that matters.
-    line_total = sum((line.net for line in invoice.lines), Decimal(0))
-    allowance_total = sum((a.amount for a in invoice.allowances), Decimal(0))
-    net = line_total - allowance_total
-    d = invoice.declared or DeclaredTotals()
 
     def pick(declared: Decimal | None, computed: Decimal) -> str:
         # Declared values are emitted UNQUANTISED. A caller writing "1102.4685" is
@@ -422,7 +501,7 @@ def build(
     # finding is more useful than raising — the caller gets an id they can look up.
 
     for index, line in enumerate(invoice.lines, start=1):
-        _line(root, index, line, cur)
+        _line(root, index, line, cur, credit=credit is not None)
 
     _check_emitted(root, invoice)
 

@@ -24,6 +24,8 @@ import pytest
 from sahih import (
     Address,
     Allowance,
+    CreditNote,
+    CreditReason,
     DeclaredTotals,
     IncompleteInvoiceError,
     Invoice,
@@ -32,6 +34,7 @@ from sahih import (
     Line,
     ModelError,
     Party,
+    TransactionFlags,
     VatCategory,
     build,
 )
@@ -61,6 +64,7 @@ def line(qty="3", price="349.99", **over) -> Line:
         "vat_category": VatCategory.STANDARD,
         "vat_rate": Decimal("5"),
         "item_type": ItemType.GOODS,
+        "classification_code": "08041000",
     }
     return Line(**{**base, **over})
 
@@ -504,3 +508,165 @@ def test_inclusive_and_exclusive_lines_can_be_mixed():
     # 100.00 exclusive + 100.00 back-computed = 200.00 net
     assert amount(xml, "LineExtensionAmount") == Decimal("200.00")
     assert amount(xml, "PayableAmount") == Decimal("210.00")
+
+
+# ==========================================================================
+# v0.2 — credit notes, transaction flags, a foreign currency, services
+# ==========================================================================
+
+
+def credit(**over) -> Invoice:
+    note = CreditNote(CreditReason.CANCELLED, "SAY-2026-00400", date(2026, 8, 1))
+    return invoice(**{"number": "SAY-CN-0007", "credit_note": note, **over})
+
+
+def test_a_credit_note_is_a_creditnote_document():
+    xml = build(credit())
+    assert xml.splitlines()[1].startswith(b"<CreditNote ")
+    assert b"<cbc:CreditNoteTypeCode>381</cbc:CreditNoteTypeCode>" in xml
+    assert b"InvoiceTypeCode" not in xml
+    assert b"<cac:CreditNoteLine>" in xml and b"<cac:InvoiceLine>" not in xml
+    assert b'<cbc:CreditedQuantity unitCode="H87">3</cbc:CreditedQuantity>' in xml
+
+
+def test_a_credit_note_cites_its_reason_and_its_invoice():
+    xml = build(credit())
+    assert b"<cbc:ResponseCode>DL8.61.1.A</cbc:ResponseCode>" in xml
+    assert b"<cbc:ID>SAY-2026-00400</cbc:ID>" in xml
+    assert b"<cbc:IssueDate>2026-08-01</cbc:IssueDate>" in xml
+    # UBL order: DiscrepancyResponse before BillingReference
+    assert xml.index(b"DiscrepancyResponse") < xml.index(b"BillingReference")
+
+
+def test_a_credit_note_has_no_due_date():
+    assert b"DueDate" not in build(credit())
+
+
+def test_a_credit_note_must_cite_an_invoice_unless_a_volume_discount():
+    with pytest.raises(ModelError, match="ibr-055-ae"):
+        CreditNote(CreditReason.ERROR)
+    note = CreditNote(CreditReason.VOLUME_DISCOUNT)
+    assert b"BillingReference" not in build(credit(credit_note=note))
+
+
+def test_credit_reason_must_be_from_the_list():
+    with pytest.raises(ModelError):
+        CreditNote("DL8.61.1.A", "X")  # type: ignore[arg-type]
+
+
+def test_an_invoice_after_a_credit_note_is_an_invoice_again():
+    """ElementTree's default namespace is global — building a credit note must not leak."""
+    build(credit())
+    assert build(invoice()).splitlines()[1].startswith(b"<Invoice ")
+
+
+@pytest.mark.parametrize(
+    ("flags", "code"),
+    [
+        (TransactionFlags(), "00000000"),
+        (TransactionFlags(free_trade_zone=True), "10000000"),
+        (TransactionFlags(continuous_supply=True), "00001000"),
+        (TransactionFlags(disclosed_agent=True), "00000100"),
+        (TransactionFlags(export=True), "00000001"),
+    ],
+)
+def test_transaction_flags_are_positional(flags, code):
+    assert flags.code == code
+    assert f"<cbc:ProfileExecutionID>{code}</cbc:ProfileExecutionID>".encode() in build(
+        invoice(transaction_flags=flags)
+    )
+
+
+def test_a_foreign_currency_invoice_states_its_vat_in_aed():
+    xml = build(invoice(currency="USD", aed_rate=Decimal("3.6725")))
+    assert b"<cbc:TaxCurrencyCode>AED</cbc:TaxCurrencyCode>" in xml
+    assert b"<cbc:SourceCurrencyCode>USD</cbc:SourceCurrencyCode>" in xml
+    assert b"<cbc:CalculationRate>3.6725</cbc:CalculationRate>" in xml
+    # 3 x 349.99 = 1049.97 net, 52.4985 VAT -> 52.50 USD; in AED 52.4985 x 3.6725 = 192.80
+    assert b'<cbc:TaxAmount currencyID="AED">192.80</cbc:TaxAmount>' in xml
+    # total with VAT 1102.4685 x 3.6725 = 4048.82
+    assert b"<cbc:DocumentDescription>AED 4048.82</cbc:DocumentDescription>" in xml
+
+
+def test_the_rate_is_capped_at_six_decimals():
+    xml = build(invoice(currency="USD", aed_rate=Decimal("3.67250049")))
+    assert b"<cbc:CalculationRate>3.6725</cbc:CalculationRate>" in xml
+
+
+def test_an_aed_invoice_states_nothing_twice():
+    xml = build(invoice(aed_rate=Decimal("1")))
+    assert b"TaxCurrencyCode" not in xml and b"TaxExchangeRate" not in xml
+
+
+def test_a_foreign_currency_without_a_rate_is_left_to_the_rules():
+    """ibr-159-ae / ibr-175-ae say so, with ids — let the rules speak."""
+    xml = build(invoice(currency="USD"))
+    assert b"TaxCurrencyCode" not in xml
+
+
+def test_aed_rate_refuses_float():
+    with pytest.raises(ModelError, match="float"):
+        invoice(currency="USD", aed_rate=3.6725)
+
+
+def test_a_service_carries_its_service_accounting_code():
+    service = line(item_type=ItemType.SERVICES, service_accounting_code="998552")
+    xml = build(invoice(lines=(service,)))
+    assert b'<cbc:ID schemeID="SAC">998552</cbc:ID>' in xml
+    assert xml.index(b"AdditionalItemIdentification") < xml.index(b"CommodityClassification")
+
+
+def test_a_party_identifier_is_emitted():
+    buyer = party(identifier="DE123456789")
+    xml = build(invoice(buyer=buyer))
+    buyer_xml = xml[xml.index(b"AccountingCustomerParty") :]
+    assert b"<cac:PartyIdentification>" in buyer_xml
+    assert buyer_xml.index(b"PartyIdentification") < buyer_xml.index(b"PostalAddress")
+
+
+def test_declared_breakdown_vat_is_emitted_and_the_totals_follow():
+    """AED 250 all in, VAT rounded per line: net 238.10, VAT 11.90 — not 238.10 x 5% = 11.91."""
+    ln = line("1", "238.10")
+    declared = DeclaredTotals(
+        tax_subtotals={(VatCategory.STANDARD, Decimal("5")): Decimal("11.90")}
+    )
+    xml = build(invoice(lines=(ln,), declared=declared))
+    assert b'<cbc:TaxAmount currencyID="AED">11.90</cbc:TaxAmount>' in xml
+    assert amount(xml, "TaxInclusiveAmount") == Decimal("250.00")
+    assert amount(xml, "PayableAmount") == Decimal("250.00")
+    assert b"11.91" not in xml.split(b"<cac:InvoiceLine>")[0]
+
+
+def test_declared_breakdown_matches_by_value_not_by_spelling():
+    ln = line("1", "238.10")
+    declared = DeclaredTotals(tax_subtotals={(VatCategory.STANDARD, "5.0"): "11.90"})
+    assert amount(build(invoice(lines=(ln,), declared=declared)), "PayableAmount") == Decimal(
+        "250.00"
+    )
+
+
+def test_declared_breakdown_for_an_absent_category_is_ignored():
+    declared = DeclaredTotals(tax_subtotals={(VatCategory.ZERO_RATED, Decimal("0")): Decimal("0")})
+    assert b"<cbc:ID>Z</cbc:ID>" not in build(invoice(declared=declared))
+
+
+def test_declared_breakdown_keys_are_checked():
+    with pytest.raises(ModelError):
+        DeclaredTotals(tax_subtotals={("S", Decimal("5")): Decimal("1")})  # type: ignore[dict-item]
+    assert not DeclaredTotals(
+        tax_subtotals={(VatCategory.STANDARD, Decimal("5")): Decimal("1")}
+    ).is_empty
+
+
+def test_an_out_of_scope_line_has_no_rate_anywhere():
+    ln = line(vat_category=VatCategory.OUTSIDE_SCOPE, vat_rate=Decimal("0"))
+    xml = build(invoice(lines=(ln,), invoice_type_code="480"))
+    assert b"<cbc:Percent>" not in xml
+    assert b"<cbc:ID>O</cbc:ID>" in xml
+
+
+def test_no_classification_code_is_invented():
+    """A goods line without one is left to ibr-184-ae; a service line needs none."""
+    xml = build(invoice(lines=(line(classification_code=None),)))
+    assert b"ItemClassificationCode" not in xml
+    assert b"<cbc:CommodityCode>G</cbc:CommodityCode>" in xml

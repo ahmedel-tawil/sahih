@@ -4,7 +4,8 @@
 
 Validate Peppol / PINT e-invoices in Python — and explain why they failed.
 
-> **Status:** v0.1.0 — working end to end. Validates real invoices against the official
+> **Status:** v0.2.0 — working end to end; builds invoices AND credit notes, in AED or a
+> foreign currency. Validates real invoices against the official
 > UAE conformance corpus, explains 18 rules in plain language, ships a CLI. Not yet on
 > PyPI. Expect the API to move before 1.0.
 
@@ -134,6 +135,39 @@ tax-inclusive price field in UBL at all.
 `TaxIncludedIndicator` stays `false`, as it is in all seven official UAE samples.
 Setting it `true` short-circuits `ibr-co-13` and `ibr-co-15` — it switches the totals
 arithmetic checks off rather than changing how prices are expressed.
+
+### Credit notes, foreign currency, transaction flags
+
+```python
+from sahih import CreditNote, CreditReason, TransactionFlags
+
+# A credit note is the same model with `credit_note` set: a UBL CreditNote, type 381,
+# citing its reason (BTAE-03) and the invoice it corrects (IBG-03).
+note = Invoice(..., credit_note=CreditNote(CreditReason.CANCELLED, "INV-0042", date(2026, 8, 1)))
+
+# A foreign-currency document states its VAT and its total again in AED, at your rate.
+usd = Invoice(..., currency="USD", aed_rate=Decimal("3.6725"))
+
+# BTAE-02 — eight flags, all off unless one genuinely applies.
+flagged = Invoice(..., transaction_flags=TransactionFlags(continuous_supply=True))
+```
+
+- The credit reasons are the UAE's list (Article 61(1) of the VAT Decree-Law, plus `VD`
+  for a volume discount — the only one that cites no invoice).
+- `export` is **not** "the buyer is abroad". A tour consumed in the UAE by a foreign
+  agency's guests is not an export; set the flag only when the supply is one.
+- A **services** line needs a service accounting code (`ibr-185-ae`), emitted as
+  `AdditionalItemIdentification` with scheme `SAC`. A **passport** legal ID needs its
+  issuing country as `legal_id_authority` (`ibr-010-ae`). A buyer off the UAE network
+  (endpoint `9900000098`) needs an `identifier` or a tax id unless the invoice is an
+  export (`ibr-135-ae`).
+- A system that rounds VAT **per line** declares its breakdown VAT
+  (`DeclaredTotals(tax_subtotals={(VatCategory.STANDARD, Decimal("5")): Decimal("11.90")})`)
+  so the e-invoice reports the figure the customer's invoice shows — the rules allow 0.02
+  of taxable x rate (`aligned-ibrp-s-09`) and say so beyond.
+- "Not subject to VAT" (`O`) carries no rate anywhere (`aligned-ibrp-o-05`, `-o-11-ae`).
+- Every combination above is built and validated against the official PINT-AE rule sets
+  in `tests/test_integration.py`.
 
 ### Languages
 

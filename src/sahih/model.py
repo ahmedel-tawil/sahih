@@ -26,6 +26,7 @@ THREE RULES THAT SHAPE THE WHOLE MODEL
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
@@ -96,6 +97,56 @@ class LegalIdType(StrEnum):
     CABINET_DECISION = "Cabinet decision"
 
 
+class CreditReason(StrEnum):
+    """
+    Why a credit note was issued (BTAE-03) — the UAE's own list, ``ibr-001-ae``.
+
+    The codes cite Article 61(1) of the VAT Decree-Law. A credit note without one
+    fails ``ibr-158-ae``; every one except a volume discount must also cite the
+    invoice it corrects (``ibr-055-ae``), which is why `CreditNote` requires it.
+    """
+
+    CANCELLED = "DL8.61.1.A"              # the supply was cancelled
+    NATURE_CHANGED = "DL8.61.1.B"         # its tax treatment changed with its nature
+    CONSIDERATION_ALTERED = "DL8.61.1.C"  # the agreed price changed (incl. bad-debt relief)
+    RETURNED = "DL8.61.1.D"               # returned, and the consideration refunded
+    ERROR = "DL8.61.1.E"                  # tax charged, or a treatment applied, in error
+    VOLUME_DISCOUNT = "VD"                # a volume discount — the one reason with no invoice
+
+
+@dataclass(frozen=True, slots=True)
+class TransactionFlags:
+    """
+    The invoice transaction type (BTAE-02) — eight flags, emitted as ``ProfileExecutionID``.
+
+    Every flag is a tax statement about the supply, so every one defaults to False and
+    is set on purpose. ``export`` in particular is NOT "the buyer is abroad": a tour
+    consumed in the UAE by a foreign agency's guests is not an export, and the
+    Guidelines warn against setting it on the buyer's address alone.
+
+    The order is the code list's, fixed: ``ibr-154-ae`` reads the string positionally.
+    """
+
+    free_trade_zone: bool = False
+    deemed_supply: bool = False
+    margin_scheme: bool = False
+    summary: bool = False
+    continuous_supply: bool = False
+    disclosed_agent: bool = False
+    e_commerce: bool = False
+    export: bool = False
+
+    @property
+    def code(self) -> str:
+        return "".join(
+            "1" if flag else "0"
+            for flag in (
+                self.free_trade_zone, self.deemed_supply, self.margin_scheme, self.summary,
+                self.continuous_supply, self.disclosed_agent, self.e_commerce, self.export,
+            )
+        )
+
+
 def _money(value: object, field_name: str) -> Decimal:
     """
     Coerce to Decimal, refusing float.
@@ -135,6 +186,9 @@ class Party:
     """
     A seller or buyer.
 
+    ``legal_id_authority`` is the issuing authority's name — for a PASSPORT it must be the
+    issuing country's ISO code (BTAE-19, ``ibr-010-ae``).
+
     ``tax_id`` is the UAE TRN. It is optional in the *model* because genuinely
     untaxed parties exist (B2C individuals, non-resident buyers on an export), but
     the builder enforces the profile's requirement and raises rather than emitting
@@ -149,6 +203,10 @@ class Party:
     legal_id_type: LegalIdType | None = None
     legal_id_authority: str | None = None
     electronic_id_scheme: str = "0235"
+    #: IBT-029 / IBT-046 — the party's identifier, e.g. a foreign buyer's own tax number.
+    #: A buyer on a predefined endpoint (not on the UAE network) needs this or a tax id
+    #: unless the invoice is an export (ibr-135-ae).
+    identifier: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,7 +220,9 @@ class Line:
     vat_category: VatCategory
     vat_rate: Decimal
     item_type: ItemType
-    classification_code: str = "996411"
+    #: ibt-158 — the item's classification (HS). Required for GOODS (``ibr-184-ae``), which
+    #: says so when it is missing; no default, because an invented code is a wrong code.
+    classification_code: str | None = None
     unit_code: str = "H87"
     service_accounting_code: str | None = None
     #: True when `unit_price` already includes VAT — "AED 350 all in", which is how
@@ -313,6 +373,14 @@ class DeclaredTotals:
     tax_inclusive: Decimal | None = None
     #: ibt-115 — amount due for payment.
     payable: Decimal | None = None
+    #: ibt-117 per (category, rate) — the VAT of each breakdown as YOUR system computed it.
+    #:
+    #: A system that rounds VAT per LINE (as tourism does on "AED 250 all in": net 238.10,
+    #: VAT 11.90) owes a different figure from the breakdown's taxable x rate (11.905 ->
+    #: 11.91), and the invoice the customer holds says 11.90. Declared, the breakdown and
+    #: every total built on it (ibt-110, ibt-112, ibt-115) carry your figure; the rules
+    #: allow it within 0.02 of taxable x rate (``aligned-ibrp-s-09``) and say so beyond.
+    tax_subtotals: Mapping[tuple[VatCategory, Decimal], Decimal] | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -322,14 +390,47 @@ class DeclaredTotals:
             value = getattr(self, name)
             if value is not None:
                 object.__setattr__(self, name, _money(value, f"DeclaredTotals.{name}"))
+        if self.tax_subtotals is not None:
+            subtotals = {}
+            for (category, rate), amount in self.tax_subtotals.items():
+                if not isinstance(category, VatCategory):
+                    raise ModelError("DeclaredTotals.tax_subtotals keys are (VatCategory, rate)")
+                key = (category, _money(rate, "DeclaredTotals.tax_subtotals rate"))
+                subtotals[key] = _money(amount, "DeclaredTotals.tax_subtotals")
+            object.__setattr__(self, "tax_subtotals", subtotals)
 
     @property
     def is_empty(self) -> bool:
-        return all(
+        return not self.tax_subtotals and all(
             getattr(self, n) is None
             for n in ("line_extension", "allowance_total", "tax_exclusive",
                       "tax_amount", "tax_inclusive", "payable")
         )
+
+
+@dataclass(frozen=True, slots=True)
+class CreditNote:
+    """
+    Makes the document a credit note (``CreditNote``, type 381) and says what it corrects.
+
+    ``invoice_number`` / ``invoice_date`` are the preceding invoice (IBG-03). PINT-AE
+    allows exactly one (``ibr-sr-06``) and requires it unless the reason is a volume
+    discount (``ibr-055-ae``) — so it is required here for every other reason rather
+    than left for that rule, whose message cannot say which invoice was meant.
+    """
+
+    reason: CreditReason
+    invoice_number: str | None = None
+    invoice_date: date | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.reason, CreditReason):
+            raise ModelError(f"CreditNote.reason must be a CreditReason, got {self.reason!r}")
+        if self.reason is not CreditReason.VOLUME_DISCOUNT and not self.invoice_number:
+            raise ModelError(
+                "CreditNote.invoice_number is required: a credit note cites the invoice it "
+                "corrects, except for a volume discount (ibr-055-ae)."
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -338,6 +439,9 @@ class Invoice:
     A complete invoice, ready to build.
 
     Deliberately has no totals. See rule 2 in the module docstring.
+
+    A credit note is the same document with `credit_note` set — the lines are what is
+    being credited, as positive amounts.
     """
 
     seller: Party
@@ -355,10 +459,19 @@ class Invoice:
     invoice_type_code: str = "380"  # commercial invoice
     note: str | None = None
     buyer_reference: str | None = None
+    #: BTAE-02. All False unless a flag genuinely applies — see TransactionFlags.
+    transaction_flags: TransactionFlags = field(default_factory=TransactionFlags)
+    #: Set to make this a credit note. See CreditNote.
+    credit_note: CreditNote | None = None
+    #: BTAE-04: 1 unit of `currency` = this many AED. Required when the currency is not
+    #: AED — the VAT is then also stated in AED (ibr-153-ae, ibr-159-ae, ibr-175-ae).
+    aed_rate: Decimal | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "lines", tuple(self.lines))
         object.__setattr__(self, "allowances", tuple(self.allowances))
+        if self.aed_rate is not None:
+            object.__setattr__(self, "aed_rate", _money(self.aed_rate, "Invoice.aed_rate"))
 
         # Deliberately permissive. A missing number, issue date or line is caught by
         # ibr-002, ibr-003 and ibr-016 respectively — with rule identifiers a caller

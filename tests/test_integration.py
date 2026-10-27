@@ -135,3 +135,75 @@ def test_layers_report_independent_rule_counts(pint_validator):
     assert base is not None and jurisdiction is not None
     assert base.fired_rules > jurisdiction.fired_rules
     assert report.fired_rules == base.fired_rules + jurisdiction.fired_rules
+
+
+# --------------------------------------------------------------------------
+# Built documents — what build() emits must pass the official rules
+# --------------------------------------------------------------------------
+
+
+def _built_cases():
+    from datetime import date
+    from decimal import Decimal
+
+    from test_build import invoice, line, party
+
+    from sahih import (
+        Address,
+        CreditNote,
+        CreditReason,
+        DeclaredTotals,
+        ItemType,
+        LegalIdType,
+        TransactionFlags,
+        VatCategory,
+    )
+
+    service = line(item_type=ItemType.SERVICES, service_accounting_code="998552")
+    note = CreditNote(CreditReason.CANCELLED, "SAY-2026-00400", date(2026, 8, 1))
+    foreign = party(
+        name="Euro Agency GmbH",
+        electronic_id="9900000098",
+        tax_id=None,
+        identifier="DE123456789",
+        address=Address("Hauptstrasse 1", "Berlin", "BE", "DE"),
+        legal_id="P1234567",
+        legal_id_type=LegalIdType.PASSPORT,
+        legal_id_authority="DE",
+    )
+    usd = {"currency": "USD", "aed_rate": Decimal("3.6725")}
+    per_line_vat = DeclaredTotals(
+        tax_subtotals={(VatCategory.STANDARD, Decimal("5")): Decimal("11.90")}
+    )
+    return {
+        "out of scope of VAT": (
+            invoice(
+                lines=(line(vat_category=VatCategory.OUTSIDE_SCOPE, vat_rate=Decimal("0")),),
+                invoice_type_code="480",
+            ),
+            {},
+        ),
+        "VAT rounded per line": (invoice(lines=(line("1", "238.10"),), declared=per_line_vat), {}),
+        "invoice": (invoice(), {}),
+        "credit note": (invoice(number="CN-1", credit_note=note), {}),
+        "services": (invoice(lines=(service,)), {}),
+        "continuous supply": (
+            invoice(transaction_flags=TransactionFlags(continuous_supply=True)),
+            {},
+        ),
+        "USD invoice": (invoice(**usd), {}),
+        "USD credit note, foreign buyer": (
+            invoice(number="CN-2", buyer=foreign, credit_note=note, lines=(service,), **usd),
+            {"buyer_tax_id_required": False},
+        ),
+    }
+
+
+@requires_artefacts
+@pytest.mark.parametrize("case", list(_built_cases()))
+def test_built_documents_are_valid(pint_validator, case):
+    from sahih import build
+
+    model, options = _built_cases()[case]
+    report = pint_validator.validate_bytes(build(model, **options), name=case)
+    assert report.is_valid, [(f.rule_id, f.message) for f in report.fatals]
